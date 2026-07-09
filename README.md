@@ -16,7 +16,7 @@ Example:
     +-------------+
     |             |
  root.a        root.b
-stable       testing
+ stable       testing
 ```
 
 
@@ -26,14 +26,14 @@ LPSS is useful when you want to:
 - test different Linux distributions;
 - experiment with kernels, drivers, or system changes;
 - keep a known-good system while modifying another one;
-- quickly restore a previous system state.
+- quickly restore a previous system state. Instead of full backup you just copy rootfs using tar or fsarchiver).
 
 LPSS uses GRUB as the bootloader backend.
 It does not replace GRUB and does not create its own boot chain.
 
 ---
 
-# Design principles
+## Design principles
 
 - **LPSS is not a bootloader.**  
   GRUB loads kernels and initrds.
@@ -62,340 +62,272 @@ A managed Linux system provides only:
 
 ---
 
-# Basic concepts
+## Basic concepts
 
-## Entry
+### Entry
+A single bootable Linux system described by a human-readable ID
+(`arch`, `opensuse`, …), a root filesystem locator, kernel/initrd
+paths, and extra kernel options.
 
-An Entry is one bootable Linux system.
+### Enabled
+The entry is available for manual or automatic boot.
 
-It describes:
+### Active
+The default entry for a role (only one per role).  `active` implies
+`enabled`.
 
-- root filesystem location;
-- kernel;
-- initramfs;
-- kernel parameters.
-
-Example:
-
-```
-
-arch
-opensuse
-fedora
-
-```
+### Trial
+A one-shot boot performed via GRUB’s `grub-reboot`.  The kernel
+command line receives `lpss_trial=1`.  After a successful test,
+`lpss_ctl confirm` makes the trial entry permanent.
 
 ---
 
-## Enabled
-
-The Entry is available for use.
-
----
-
-## Active
-
-The Entry selected for automatic boot.
-
-Only one Entry per role can be active.
-
----
-
-## Trial
-
-A one-time boot of an Entry.
-
-Trial boots are handled through GRUB's `grub-reboot`.
-
-After successful testing:
+## Disk layout
 
 ```
-
-lpss_ctl confirm
-
-```
-
-makes the Entry permanent.
-
----
-
-# Disk layout
-
-```
-
 GPT
-
-ESP
-|
-+-- EFI/LPSS/
-|
-+-- grubx64.efi
-+-- grub.cfg        (bootstrap)
-
-LPSS partition
-|
-+-- lpss.conf
-+-- flags/
-+-- grub.cfg
-+-- grubenv
-
-root.a
-root.b
-root.c
-
+ ESP
+  └─ EFI/LPSS/
+       ├─ grubx64.efi
+       └─ grub.cfg          (bootstrap)
+ LPSS partition (ext4)
+  ├─ lpss.conf
+  ├─ flags/
+  ├─ grub.cfg               (main menu)
+  └─ grubenv
+ root.a
+ root.b
+ …
 ```
 
 ---
 
-# Configuration
+## Quick start
 
-LPSS configuration is stored in:
+### 1. Prepare the disk manually
+Partition the disk and format the filesystems with standard tools
+(`parted`, `mkfs.vfat`, `mkfs.ext4`, …).
 
+```bash
+# example (adjust to your setup)
+parted /dev/sda mklabel gpt
+parted /dev/sda mkpart ESP fat32 1MiB 512MiB
+parted /dev/sda set 1 esp on
+parted /dev/sda mkpart LPSS ext4 512MiB 2.5GiB
+parted /dev/sda mkpart root.a ext4 2.5GiB 100%
+
+mkfs.vfat /dev/sda1
+mkfs.ext4 /dev/sda2
+mkfs.ext4 /dev/sda3
 ```
 
-lpss.conf
+### 2. Mount everything
+```bash
+mount /dev/sda2 /mnt/lpss      # LPSS partition
+mount /dev/sda1 /boot/efi      # EFI System Partition
+```
 
-````
+### 3. Install LPSS infrastructure
+```bash
+lpss_install --lpss-dir /mnt/lpss --esp-dir /boot/efi
+```
 
-Configuration contains only static information.
-Runtime state is stored separately.
+If you need extra `grub-install` flags (e.g. `--removable`,
+`--no-nvram`), pass them with `--grub-install-extra`:
 
-Example:
+```bash
+lpss_install --lpss-dir /mnt/lpss --esp-dir /boot/efi \
+    --grub-install-extra "--removable --no-nvram"
+```
+
+### 4. Import a Linux system
+Mount the root filesystem of your existing installation:
+```bash
+mount /dev/sda3 /mnt/rootfs
+```
+
+Register it as an LPSS entry:
+```bash
+lpss_import --lpss-dir /mnt/lpss --root /mnt/rootfs \
+    --id arch --locator partlabel:root.a
+```
+
+The tool auto‑detects kernel and initrd.  Omit `--locator` to see
+a list of possible values and choose interactively.
+
+### 5. Enable, activate, and apply
+```bash
+lpss_ctl --lpss-dir /mnt/lpss enable arch
+lpss_ctl --lpss-dir /mnt/lpss activate arch
+lpss_ctl --lpss-dir /mnt/lpss apply        # regenerate grub.cfg
+```
+
+Now `arch` will boot automatically.
+
+### 6. Trial‑boot another entry
+```bash
+lpss_ctl --lpss-dir /mnt/lpss boot opensuse
+reboot
+```
+
+The system starts `opensuse` once with `lpss_trial=1` on the kernel
+command line.  If everything works, make it the permanent default:
+
+```bash
+lpss_ctl --lpss-dir /mnt/lpss confirm
+```
+
+`confirm` activates the current trial entry for its role.
+
+---
+
+## Configuration (`lpss.conf`)
+
+Located at the root of the LPSS partition.  Contains only static
+information; runtime state lives in `flags/` and `grubenv`.
 
 ```ini
 [lpss]
 id=550e8400-e29b-41d4-a716-446655440000
 version=1
 
-
 [entry.arch]
 id=arch
 role=root
-
 locator=partlabel:root.a
-
 linux=/boot/vmlinuz-linux
 initrd=/boot/initramfs-linux.img
-
 options=quiet splash
-
 
 [entry.opensuse]
 id=opensuse
 role=root
-
 locator=partlabel:root.b
-
 linux=/boot/vmlinuz
 initrd=/boot/initrd
-
 options=splash=silent
-````
+```
+
+The `locator` field tells the GRUB generator how to find the root
+filesystem.  Supported types (the backend is extensible):
+
+- `partlabel:<GPT PARTLABEL>`
+- `partuuid:<GPT PARTUUID>`
+- `fsuuid:<filesystem UUID>`
+- `label:<filesystem label>`
 
 ---
 
-# Tools
+## Tools
 
-## lpss_init
+All tools accept `--lpss-dir` (preferred) or the environment variable
+`LPSS_MOUNT`.  If both are omitted, `/mnt/lpss` is used.
 
-Creates LPSS infrastructure:
+| Tool           | Purpose |
+|----------------|---------|
+| `lpss_install` | Install LPSS infrastructure onto an already‑prepared partition. |
+| `lpss_import`  | Register an existing Linux installation as an LPSS entry. |
+| `lpss_ctl`     | Manage entries —  `enable`, `disable`, `activate`, ... |
+| `lpss_check`   | (planned) Diagnose configuration consistency. |
 
-* LPSS partition;
-* EFI boot entry;
-* GRUB bootstrap;
-* initial configuration.
-
----
-
-## lpss_import
-
-Imports an existing Linux installation:
-
-* reads kernel/initramfs;
-* extracts boot parameters;
-* creates an LPSS Entry.
-
-Supported sources:
-
-* installed root filesystem;
-* fsarchiver image;
-* filesystem image.
+`lpss_ctl current` reads the running entry from `/proc/cmdline`.
+For testing, you can override the command line with the environment
+variable `LPSS_CMDLINE_FILE`.
 
 ---
 
-## lpss_ctl
+## Technical design
 
-Main management utility.
-
-Examples:
-
-```bash
-lpss_ctl list
-
-lpss_ctl status
-
-lpss_ctl boot opensuse
-
-lpss_ctl activate arch
-
-lpss_ctl confirm
-```
-
----
-
-## lpss_check
-
-Diagnostic tool.
-
-Checks:
-
-* configuration;
-* states;
-* GRUB integration;
-* Entry consistency.
-
----
-
-# Technical design
-
-## LPSS discovery
-
-The EFI loader starts GRUB from the ESP.
-
-The bootstrap `grub.cfg` contains the LPSS filesystem UUID:
+### LPSS discovery
+The bootstrap `grub.cfg` in the ESP contains the LPSS filesystem UUID:
 
 ```
-search --fs-uuid <LPSS_UUID>
-configfile /grub.cfg
+search --fs-uuid --set=root <LPSS_UUID>
+set prefix=($root)/grub
+configfile ($root)/grub.cfg
 ```
 
-The main LPSS `grub.cfg` is stored on the LPSS partition.
-
-Linux receives:
-
-```
-lpss_uuid=<uuid>
-lpss_entry=<entry_id>
-```
-
-and during trial boot:
+GRUB loads the main `grub.cfg` from the LPSS partition.  The kernel
+receives:
 
 ```
-lpss_trial=1
+lpss_uuid=<LPSS_UUID> lpss_entry=<entry_id>
 ```
 
----
+and, during a trial boot, additionally `lpss_trial=1`.
 
-## Entry locator
+### Entry locator abstraction
+The root filesystem is not hard‑coded into the menu.  The GRUB
+generator translates a `locator` into the appropriate `search` command,
+making the menu independent of the underlying naming scheme.
 
-The root filesystem is not hardcoded.
-
-LPSS uses:
-
-```
-locator=<type>:<value>
-```
-
-Examples:
-
-```
-locator=partlabel:root.a
-
-locator=partuuid:xxxx
-
-locator=fsuuid:xxxx
-
-locator=label:ROOT
-```
-
-The GRUB generator converts this into the appropriate `search` command.
-
----
-
-## State storage
-
-State is stored as files:
+### State storage
+Runtime state is kept as empty files under `flags/<entry>/`:
 
 ```
 flags/
-
-arch/
- ├── enabled
- └── active
-
-opensuse/
- └── enabled
+ arch/
+  ├── enabled
+  └── active
+ opensuse/
+  └── enabled
 ```
 
-Rules:
+Invariants (enforced by `lpss_ctl`):
 
-* active Entry must be enabled;
-* only one active Entry exists per role;
-* disabling an active Entry is forbidden.
+- an active entry must also be enabled,
+- only one entry per role may be active,
+- disabling an active entry is rejected.
 
-The trial state is stored only in GRUB `grubenv`.
+Trial state is stored **only** in GRUB’s `grubenv` (the `next_entry`
+variable).
 
----
-
-## Boot flow
-
+### Boot flow
 1. EFI starts GRUB.
-2. GRUB finds LPSS.
-3. LPSS configuration is loaded.
-4. GRUB generates menu entries.
-
-Menu:
-
-```
-LPSS
-
-Automatic
-
-Arch Linux
-
-OpenSUSE
-```
-
-Automatic selection:
-
-```
-active + enabled Entry
-
-or
-
-first enabled Entry
-```
-
-Manual selection creates a trial boot.
-
-After successful boot:
-
-```
-lpss_ctl confirm
-```
-
-changes the tested Entry to active.
+2. GRUB reads the bootstrap config, locates the LPSS partition.
+3. The main `grub.cfg` builds a menu from all registered entries.
+4. The `Automatic` menu item boots the active+enabled entry (or
+   the first enabled if none is active).
+5. Manual selection triggers a trial boot (one‑shot).
+6. After a successful trial, `lpss_ctl confirm` promotes the entry
+   to active.
 
 ---
 
-# Current status
+## Current status
 
-Early development.
+Early development — the core workflow is functional on GPT + UEFI
+systems with an ext4 LPSS partition.  What is implemented:
 
-Initial target:
+- `lpss_install`, `lpss_import`, `lpss_ctl` with all listed commands,
+- `partlabel` locator,
+- `root` role only,
+- `smoke_test.py` for offline validation.
 
-* GPT systems;
-* GRUB backend;
-* partition role: root only;
-* filesystem-based state;
-* file-based configuration.
+Planned:
 
-Future:
+- additional roles (`home`, `data`, …),
+- more locator backends,
+- `lpss_check` diagnostic tool,
+- improved importers (fsarchiver, raw images, …).
 
-* additional roles (`home`, `data`);
-* more filesystems;
-* more locator types;
-* improved importers.
+---
+
+## Development & testing
+
+A smoke test that runs the full cycle within one test folder is located
+at `test/smoke_test.py`.  It creates mock GRUB tools and a fake rootfs,
+then exercises every LPSS tool.
+
+```bash
+# Run from the project root
+sudo ./test/smoke_test.py --dir /tmp/lpss-smoke
+```
+
+The test prints `[PASS]` / `[FAIL]` for each check.  It requires
+`sudo` only to allow the mock scripts to work with file permissions;
+no real devices are touched.
 
 ---
 

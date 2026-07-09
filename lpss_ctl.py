@@ -19,6 +19,16 @@ from lib.flags import read_flags, get_flag, set_flag
 from lib.grub import generate_grub_cfg
 
 
+def _read_cmdline():
+    """Return kernel command-line string."""
+    cmdline_path = os.environ.get('LPSS_CMDLINE_FILE', '/proc/cmdline')
+    try:
+        with open(cmdline_path) as f:
+            return f.read()
+    except FileNotFoundError:
+        return ""
+
+
 def get_lpss_dir(args_lpss_dir=None):
     if args_lpss_dir:
         return args_lpss_dir
@@ -71,7 +81,7 @@ def main():
     lpss_dir = get_lpss_dir(args.lpss_dir)
 
     if args.command == 'current':
-        cmdline = open('/proc/cmdline').read()
+        cmdline = _read_cmdline()
         lpss_entry = None
         for param in cmdline.split():
             if param.startswith('lpss_entry='):
@@ -105,12 +115,11 @@ def main():
             enabled = 'enabled' in f
             active = 'active' in f
             print(f"  {eid}: enabled={enabled}, active={active}, role={entry.role}")
-        if os.path.exists('/proc/cmdline'):
-            cmdline = open('/proc/cmdline').read()
-            for param in cmdline.split():
-                if param.startswith('lpss_entry='):
-                    print(f"Current boot entry: {param.split('=', 1)[1]}")
-                    break
+        cmdline = _read_cmdline()
+        for param in cmdline.split():
+            if param.startswith('lpss_entry='):
+                print(f"Current boot entry: {param.split('=', 1)[1]}")
+                break
 
     elif args.command == 'list':
         for eid in config.entries:
@@ -143,7 +152,7 @@ def main():
             sys.exit(1)
 
     elif args.command == 'confirm':
-        cmdline = open('/proc/cmdline').read()
+        cmdline = _read_cmdline()
         trial = False
         lpss_entry = None
         for param in cmdline.split():

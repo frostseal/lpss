@@ -12,6 +12,7 @@ No partitioning or formatting is performed.
 """
 import argparse
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -27,10 +28,7 @@ def find_grub_tool(name: str) -> str:
 
 
 def get_lpss_uuid(lpss_dir):
-    """
-    Try to determine the filesystem UUID of the device mounted at lpss_dir.
-    Uses findmnt and blkid. Returns None if unsuccessful.
-    """
+    """Try to determine the filesystem UUID of the device mounted at lpss_dir."""
     try:
         dev = subprocess.run(['findmnt', '-n', '-o', 'SOURCE', lpss_dir],
                              capture_output=True, text=True, check=True)
@@ -54,6 +52,17 @@ def run(cmd, desc=None):
         sys.exit(1)
 
 
+def check_mount_point(path):
+    """Return True if path is a mount point, else print a warning."""
+    try:
+        subprocess.run(['findmnt', '-n', path], capture_output=True, check=True)
+        return True
+    except subprocess.CalledProcessError:
+        print(f"Warning: {path} does not appear to be a mount point.",
+              file=sys.stderr)
+        return False
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -68,7 +77,7 @@ def main():
                              '(auto-detected if omitted)')
     parser.add_argument('--bootloader-id', default='LPSS',
                         help='EFI boot entry name (default: LPSS)')
-    parser.add_argument('--grub-install-extra', default='',
+    parser.add_argument('--grub-install-extra', type=str, default='',
                         help='Extra arguments passed verbatim to grub-install '
                              '(e.g., "--removable --no-nvram")')
     args = parser.parse_args()
@@ -76,24 +85,44 @@ def main():
     lpss_dir = os.path.abspath(args.lpss_dir)
     esp_dir = os.path.abspath(args.esp_dir)
 
-    # Sanity checks
-    if not os.path.isdir(lpss_dir):
-        print(f"Error: LPSS directory not found: {lpss_dir}", file=sys.stderr)
-        sys.exit(1)
-    if not os.path.isdir(esp_dir):
-        print(f"Error: ESP directory not found: {esp_dir}", file=sys.stderr)
+    # 0. Validate bootloader-id
+    if not re.match(r'^[A-Za-z0-9._-]+$', args.bootloader_id):
+        print("Error: --bootloader-id must contain only A-Z, a-z, 0-9, "
+              "'.', '_', '-'", file=sys.stderr)
         sys.exit(1)
 
-    # Determine LPSS UUID
+    # 1. Early dependency checks
+    for tool in ['findmnt', 'blkid']:
+        if not shutil.which(tool):
+            print(f"Error: required system utility '{tool}' not found in PATH",
+                  file=sys.stderr)
+            sys.exit(1)
+
+    grub_install = find_grub_tool('install')
+    if not grub_install:
+        print("Error: grub-install or grub2-install not found in PATH",
+              file=sys.stderr)
+        sys.exit(1)
+
+    editenv_cmd = find_grub_tool('editenv')
+    if not editenv_cmd:
+        print("Error: grub-editenv or grub2-editenv is required",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # 2. Mount point checks (warn only)
+    check_mount_point(lpss_dir)
+    check_mount_point(esp_dir)
+
+    # 3. Determine LPSS UUID
     lpss_uuid = args.lpss_uuid or get_lpss_uuid(lpss_dir)
     if not lpss_uuid:
         print("Error: could not determine LPSS UUID. "
               "Use --lpss-uuid to specify it.", file=sys.stderr)
         sys.exit(1)
-
     print(f"LPSS UUID: {lpss_uuid}")
 
-    # 1. Create lpss.conf
+    # 4. Create lpss.conf
     config_path = os.path.join(lpss_dir, 'lpss.conf')
     if os.path.exists(config_path):
         print(f"Error: {config_path} already exists. "
@@ -108,30 +137,17 @@ def main():
         f.write(config_content)
     print(f"Created {config_path}")
 
-    # 2. Create flags directory
+    # 5. Create flags directory
     flags_dir = os.path.join(lpss_dir, 'flags')
     os.makedirs(flags_dir, exist_ok=True)
     print(f"Created directory {flags_dir}")
 
-    # 3. Create empty main grub.cfg
-    grub_cfg_path = os.path.join(lpss_dir, 'grub.cfg')
-    with open(grub_cfg_path, 'w') as f:
-        f.write("# LPSS - empty menu (no entries registered yet)\n")
-    print(f"Created {grub_cfg_path}")
-
-    # 4. Create empty grubenv
+    # 6. Create empty grubenv
     grubenv_path = os.path.join(lpss_dir, 'grubenv')
-    with open(grubenv_path, 'w') as f:
-        pass
-    print(f"Created {grubenv_path}")
+    run([editenv_cmd, grubenv_path, 'create'],
+        desc="Initialising grubenv")
 
-    # 5. Run grub-install
-    grub_install = find_grub_tool('install')
-    if not grub_install:
-        print("Error: grub-install or grub2-install not found in PATH",
-              file=sys.stderr)
-        sys.exit(1)
-
+    # 7. Run grub-install
     extra_args = shlex.split(args.grub_install_extra) if args.grub_install_extra else []
     grub_cmd = [
         grub_install,
@@ -143,7 +159,13 @@ def main():
 
     run(grub_cmd, desc="Installing GRUB (UEFI)")
 
-    # 6. Write bootstrap grub.cfg in ESP
+    # 8. Overwrite main grub.cfg (guarantee LPSS version)
+    grub_cfg_path = os.path.join(lpss_dir, 'grub.cfg')
+    with open(grub_cfg_path, 'w') as f:
+        f.write("# LPSS - empty menu (no entries registered yet)\n")
+    print(f"Created (overwritten) {grub_cfg_path}")
+
+    # 9. Write bootstrap grub.cfg in ESP
     lpss_esp_cfg = os.path.join(esp_dir, 'EFI', args.bootloader_id, 'grub.cfg')
     os.makedirs(os.path.dirname(lpss_esp_cfg), exist_ok=True)
     with open(lpss_esp_cfg, 'w') as f:
