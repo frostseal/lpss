@@ -4,7 +4,8 @@
 LPSS control utility.
 
 Manage boot entries, flags, and trial boots.
-The LPSS partition can be given via --lpss-dir, LPSS_MOUNT env, or defaults to /mnt/lpss.
+The LPSS partition can be given via --lpss-dir, LPSS_MOUNT env, or
+defaults to /mnt/lpss.
 
 Every modifying operation prints the exact filesystem paths affected.
 """
@@ -37,17 +38,21 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('--lpss-dir', help='Path to mounted LPSS partition (overrides LPSS_MOUNT)')
+    parser.add_argument('--lpss-dir',
+                        help='Path to mounted LPSS partition (overrides LPSS_MOUNT)')
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     subparsers.add_parser('status', help='Show overall LPSS status')
     subparsers.add_parser('list', help='List all registered entries')
-    subparsers.add_parser('current', help='Show current booted entry (from /proc/cmdline)')
+    subparsers.add_parser('current',
+                          help='Show current booted entry (from /proc/cmdline)')
 
-    boot_parser = subparsers.add_parser('boot', help='Set a one-shot trial boot')
+    boot_parser = subparsers.add_parser('boot',
+                                        help='Set a one-shot trial boot')
     boot_parser.add_argument('entry', help='Entry ID to boot')
 
-    subparsers.add_parser('confirm', help='Confirm a trial boot, making it permanent')
+    subparsers.add_parser('confirm',
+                          help='Confirm a trial boot, making it permanent')
 
     enable_parser = subparsers.add_parser('enable', help='Enable an entry')
     enable_parser.add_argument('entry', help='Entry ID')
@@ -55,10 +60,12 @@ def main():
     disable_parser = subparsers.add_parser('disable', help='Disable an entry')
     disable_parser.add_argument('entry', help='Entry ID')
 
-    activate_parser = subparsers.add_parser('activate', help='Activate an entry')
+    activate_parser = subparsers.add_parser('activate',
+                                            help='Activate an entry')
     activate_parser.add_argument('entry', help='Entry ID')
 
-    subparsers.add_parser('apply', help='Regenerate grub.cfg from current configuration')
+    subparsers.add_parser('apply',
+                          help='Regenerate grub.cfg from current configuration')
 
     args = parser.parse_args()
     lpss_dir = get_lpss_dir(args.lpss_dir)
@@ -82,7 +89,8 @@ def main():
     grub_cfg_path = os.path.join(lpss_dir, 'grub.cfg')
 
     if not os.path.isfile(config_path):
-        print(f"Error: {lpss_dir} does not appear to be an LPSS partition (no lpss.conf)", file=sys.stderr)
+        print(f"Error: {lpss_dir} does not appear to be an LPSS partition "
+              "(no lpss.conf)", file=sys.stderr)
         sys.exit(1)
 
     config = load_config(config_path)
@@ -114,13 +122,15 @@ def main():
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
         if not get_flag(flags_dir, entry_id, 'enabled'):
-            print(f"Warning: entry '{entry_id}' is not enabled; trial boot may fail if it's disabled in menu.",
+            print(f"Warning: entry '{entry_id}' is not enabled; "
+                  "trial boot may fail if it's disabled in menu.",
                   file=sys.stderr)
 
         next_entry = f'entry_{entry_id}'
         editenv_cmd = find_grub_tool('editenv')
         if not editenv_cmd:
-            print("Error: neither grub-editenv nor grub2-editenv found in PATH", file=sys.stderr)
+            print("Error: neither grub-editenv nor grub2-editenv found in PATH",
+                  file=sys.stderr)
             sys.exit(1)
 
         cmd = [editenv_cmd, grubenv_path, 'set', f'next_entry={next_entry}']
@@ -142,13 +152,16 @@ def main():
             elif param.startswith('lpss_entry='):
                 lpss_entry = param.split('=', 1)[1]
         if not trial:
-            print("Error: current boot is not a trial (lpss_trial=1 missing)", file=sys.stderr)
+            print("Error: current boot is not a trial (lpss_trial=1 missing)",
+                  file=sys.stderr)
             sys.exit(1)
         if not lpss_entry:
-            print("Error: lpss_entry missing from kernel command line", file=sys.stderr)
+            print("Error: lpss_entry missing from kernel command line",
+                  file=sys.stderr)
             sys.exit(1)
         if lpss_entry not in config.entries:
-            print(f"Error: entry '{lpss_entry}' not in configuration", file=sys.stderr)
+            print(f"Error: entry '{lpss_entry}' not in configuration",
+                  file=sys.stderr)
             sys.exit(1)
 
         role = config.entries[lpss_entry].role
@@ -187,7 +200,8 @@ def main():
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
         if get_flag(flags_dir, entry_id, 'active'):
-            print(f"Error: entry '{entry_id}' is active. Deactivate it first.", file=sys.stderr)
+            print(f"Error: entry '{entry_id}' is active. Deactivate it first.",
+                  file=sys.stderr)
             sys.exit(1)
         flag_path = os.path.join(flags_dir, entry_id, 'enabled')
         if os.path.exists(flag_path):
@@ -203,7 +217,9 @@ def main():
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
         if not get_flag(flags_dir, entry_id, 'enabled'):
-            print(f"Error: entry '{entry_id}' is not enabled. Enable it first or use 'confirm'.", file=sys.stderr)
+            print(f"Error: entry '{entry_id}' is not enabled. "
+                  "Enable it first or use 'confirm'.",
+                  file=sys.stderr)
             sys.exit(1)
 
         role = config.entries[entry_id].role

@@ -59,14 +59,14 @@ def find_kernel_initrd(root_dir):
     return linux_rel, initrd_rel
 
 
-def update_entry_in_config(config_path, entry_id, linux, initrd, options, locator, role):
+def update_entry_in_config(config_path, entry_id, linux, initrd,
+                           options, locator, role):
     """
     Update an existing entry section in lpss.conf.
 
-    Reads the file, modifies the matching [entry.<id>] section, and writes it back.
-    Returns a list of changed fields for logging.
+    Reads the file, modifies the matching [entry.<id>] section,
+    and writes it back.
     """
-    changed = []
     with open(config_path, 'r') as f:
         lines = f.readlines()
 
@@ -87,12 +87,10 @@ def update_entry_in_config(config_path, entry_id, linux, initrd, options, locato
         stripped = line.strip()
         if stripped == section_header:
             in_target = True
-            new_lines.append(line)  # keep header
+            new_lines.append(line)
             i += 1
-            # process lines inside the section until next section or EOF
             while i < len(lines) and not lines[i].startswith('['):
-                i += 1  # skip old contents
-            # insert updated fields
+                i += 1
             for key in ['id', 'role', 'locator', 'linux', 'initrd', 'options']:
                 if key == 'id':
                     new_lines.append(f'id={entry_id}\n')
@@ -104,7 +102,6 @@ def update_entry_in_config(config_path, entry_id, linux, initrd, options, locato
             i += 1
 
     if not in_target:
-        # section not found, append at end
         new_lines.append(f'\n{section_header}\n')
         new_lines.append(f'id={entry_id}\n')
         new_lines.append(f'role={role}\n')
@@ -112,21 +109,9 @@ def update_entry_in_config(config_path, entry_id, linux, initrd, options, locato
         new_lines.append(f'linux=/{linux.lstrip("/")}\n')
         new_lines.append(f'initrd=/{initrd.lstrip("/")}\n')
         new_lines.append(f'options={options}\n')
-        changed.append('entry added')
-    else:
-        # determine what changed by comparing old and new
-        # we already have old config from load_config before update
-        # but we can simply say "updated"
-        changed.append('linux' if linux else '')
-        changed.append('initrd' if initrd else '')
-        changed.append('options' if options else '')
-        changed.append('locator' if locator else '')
-        changed = [c for c in changed if c]
 
     with open(config_path, 'w') as f:
         f.writelines(new_lines)
-
-    return changed
 
 
 def main():
@@ -134,7 +119,8 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('--lpss-dir', help='Path to mounted LPSS partition (overrides LPSS_MOUNT)')
+    parser.add_argument('--lpss-dir',
+                        help='Path to mounted LPSS partition (overrides LPSS_MOUNT)')
     parser.add_argument('--root', required=True,
                         help='Path to mounted root filesystem of the Linux installation')
     parser.add_argument('--id', required=True,
@@ -197,19 +183,21 @@ def main():
     entry_exists = args.id in config.entries
 
     if entry_exists and not args.update:
-        print(f"Error: entry '{args.id}' already exists. Use --update to modify.",
+        print(f"Error: entry '{args.id}' already exists. "
+              "Use --update to modify.",
               file=sys.stderr)
         sys.exit(1)
 
     if entry_exists and args.update:
-        changed = update_entry_in_config(config_path, args.id,
-                                         linux_path, initrd_path,
-                                         args.options, args.locator, args.role)
+        update_entry_in_config(config_path, args.id,
+                               linux_path, initrd_path,
+                               args.options, args.locator, args.role)
         print(f"Updated entry '{args.id}' in {config_path}:")
-        for field in changed:
-            print(f"  - {field}")
+        print(f"  linux=/{linux_path.lstrip('/')}")
+        print(f"  initrd=/{initrd_path.lstrip('/')}")
+        print(f"  options={args.options}")
+        print(f"  locator={args.locator}")
     else:
-        # New entry
         entry_block = f"""
 [entry.{args.id}]
 id={args.id}
@@ -223,7 +211,6 @@ options={args.options}
             f.write(entry_block)
         print(f"Appended entry '{args.id}' to {config_path}")
 
-    # Reload config and regenerate grub.cfg
     config = load_config(config_path)
     flags = read_flags(flags_dir)
     generate_grub_cfg(config, flags, grub_cfg_path)
