@@ -3,28 +3,29 @@
 """
 Smoke test for LPSS.
 
-Runs a full cycle in an isolated directory (no real devices needed).
-Creates a mock grub-install, sets up minimal rootfs, and exercises
-lpss_install, lpss_import, lpss_ctl.
+Creates temporary loop images, formats them, mounts them, and runs
+the full LPSS cycle using the host's GRUB tools (grub-install,
+grub-editenv).  Uses grub-install with --removable --no-nvram so
+that BOOTX64.EFI is placed in the standard removable path.
 
-Usage:
-  sudo ./test/smoke_test.py --dir /tmp/lpss-test
+All locators use 'label' type (e.g., label:root.test) for maximum
+compatibility.
 """
 import argparse
 import os
 import shutil
 import subprocess
 import sys
-import textwrap
 
-# Determine project root relative to this test file
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
+
 
 def check_file(path, description):
     if os.path.exists(path):
         print(f"  [PASS] {description} ({path})")
     else:
         print(f"  [FAIL] {description} ({path}) missing")
+
 
 def check_file_contains(path, substring, description):
     try:
@@ -37,177 +38,160 @@ def check_file_contains(path, substring, description):
     except FileNotFoundError:
         print(f"  [FAIL] {description}: file {path} not found")
 
+
 def check_flag_exists(flags_dir, entry, flag):
     path = os.path.join(flags_dir, entry, flag)
     check_file(path, f"flag {entry}/{flag}")
+
 
 def run(cmd, **kwargs):
     print(f"  Running: {' '.join(cmd)}")
     return subprocess.run(cmd, **kwargs)
 
+
+def find_grub_tool(name):
+    """Locate grub-<name> or grub2-<name>."""
+    for candidate in [f'grub-{name}', f'grub2-{name}']:
+        path = shutil.which(candidate)
+        if path:
+            return path
+    return None
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('--dir', required=True, help='Working directory for the test')
+    parser.add_argument('--dir', required=True, help='Working directory')
     args = parser.parse_args()
 
     base = os.path.abspath(args.dir)
-    lpss_dir = os.path.join(base, 'lpss')
-    esp_dir = os.path.join(base, 'esp')
-    rootfs_dir = os.path.join(base, 'rootfs')
-    bin_dir = os.path.join(base, 'bin')
+    if os.path.exists(base):
+        shutil.rmtree(base)
+    os.makedirs(base, exist_ok=True)
 
-    # Clean up any previous run
-    for sub in ['lpss', 'esp', 'rootfs', 'bin']:
-        path = os.path.join(base, sub)
-        if os.path.exists(path):
-            shutil.rmtree(path)
+    if not find_grub_tool('install'):
+        print("SKIP: grub-install (or grub2-install) not found.")
+        sys.exit(0)
 
-    os.makedirs(lpss_dir, exist_ok=True)
-    os.makedirs(esp_dir, exist_ok=True)
-    os.makedirs(rootfs_dir + '/boot', exist_ok=True)
-    os.makedirs(bin_dir, exist_ok=True)
+    lpss_img = os.path.join(base, 'lpss.img')
+    esp_img = os.path.join(base, 'esp.img')
+    run(['dd', 'if=/dev/zero', f'of={lpss_img}', 'bs=1M', 'count=256'],
+        check=True)
+    run(['dd', 'if=/dev/zero', f'of={esp_img}', 'bs=1M', 'count=64'],
+        check=True)
+    run(['mkfs.ext4', '-F', lpss_img], check=True)
+    run(['mkfs.vfat', esp_img], check=True)
 
-    # Absolute paths to LPSS tools
-    lpss_install = os.path.join(PROJECT_DIR, 'lpss_install.py')
-    lpss_import = os.path.join(PROJECT_DIR, 'lpss_import.py')
-    lpss_ctl = os.path.join(PROJECT_DIR, 'lpss_ctl.py')
+    lpss_mnt = os.path.join(base, 'lpss')
+    esp_mnt = os.path.join(base, 'esp')
+    os.makedirs(lpss_mnt, exist_ok=True)
+    os.makedirs(esp_mnt, exist_ok=True)
+    run(['mount', '-o', 'loop', lpss_img, lpss_mnt], check=True)
+    run(['mount', '-o', 'loop', esp_img, esp_mnt], check=True)
 
-    for tool in (lpss_install, lpss_import, lpss_ctl):
-        if not os.path.exists(tool):
-            print(f"Error: LPSS tool not found: {tool}", file=sys.stderr)
-            sys.exit(1)
+    try:
+        lpss_install = os.path.join(PROJECT_DIR, 'lpss_install.py')
+        lpss_import = os.path.join(PROJECT_DIR, 'lpss_import.py')
+        lpss_ctl = os.path.join(PROJECT_DIR, 'lpss_ctl.py')
 
-    # Check for real grub-editenv
-    real_editenv = None
-    for candidate in ['grub2-editenv', 'grub-editenv']:
-        if shutil.which(candidate):
-            real_editenv = candidate
-            break
-    if not real_editenv:
-        print("Warning: grub-editenv not found, trial boot tests will be skipped.")
+        for tool in (lpss_install, lpss_import, lpss_ctl):
+            if not os.path.exists(tool):
+                print(f"Error: LPSS tool not found: {tool}", file=sys.stderr)
+                sys.exit(1)
 
-    # Mock grub-install: creates stub .efi and grubenv
-    grub_install_script = textwrap.dedent(f"""\
-        #!/bin/bash
-        set -e
-        boot_dir=""
-        efi_dir=""
-        bootloader_id=""
-        while [[ $# -gt 0 ]]; do
-            case "$1" in
-                --boot-directory)
-                    boot_dir="$2"
-                    shift 2
-                    ;;
-                --efi-directory)
-                    efi_dir="$2"
-                    shift 2
-                    ;;
-                --bootloader-id)
-                    bootloader_id="$2"
-                    shift 2
-                    ;;
-                *)
-                    shift
-                    ;;
-            esac
-        done
-        mkdir -p "$efi_dir/EFI/$bootloader_id"
-        touch "$efi_dir/EFI/$bootloader_id/grubx64.efi"
-        mkdir -p "$boot_dir/grub/x86_64-efi"
-        if command -v {real_editenv or 'grub2-editenv'} &>/dev/null; then
-            {real_editenv or 'grub2-editenv'} "$boot_dir/grubenv" create
-        else
-            touch "$boot_dir/grubenv"
-        fi
-        exit 0
-    """)
-    grub_install_path = os.path.join(bin_dir, 'grub-install')
-    with open(grub_install_path, 'w') as f:
-        f.write(grub_install_script)
-    os.chmod(grub_install_path, 0o755)
+        env = os.environ.copy()
 
-    grub2_install_path = os.path.join(bin_dir, 'grub2-install')
-    if not os.path.exists(grub2_install_path):
-        os.symlink(grub_install_path, grub2_install_path)
+        print("=== 1. lpss_install ===")
+        fake_uuid = 'fake-uuid-1234-abcd'
+        run([lpss_install,
+             '--lpss-dir', lpss_mnt,
+             '--esp-dir', esp_mnt,
+             '--lpss-uuid', fake_uuid,
+             '--grub-install-extra=--removable --no-nvram'],
+            env=env, check=True)
 
-    # Environment with mock in PATH
-    env = os.environ.copy()
-    env['PATH'] = bin_dir + ':' + env.get('PATH', '/usr/bin:/bin')
+        check_file(os.path.join(lpss_mnt, 'lpss.conf'), 'lpss.conf')
+        check_file_contains(os.path.join(lpss_mnt, 'lpss.conf'), fake_uuid,
+                            'UUID in lpss.conf')
+        check_file(os.path.join(lpss_mnt, 'flags'), 'flags directory')
 
-    # 1. Install LPSS
-    print("=== 1. lpss_install ===")
-    fake_uuid = 'fake-uuid-1234-abcd'
-    run([lpss_install,
-         '--lpss-dir', lpss_dir,
-         '--esp-dir', esp_dir,
-         '--lpss-uuid', fake_uuid,
-         '--bootloader-id', 'LPSS',
-         '--grub-install-extra=--no-nvram'],
-        env=env, check=True)
+        grub_dir = os.path.join(lpss_mnt, 'grub2')
+        if not os.path.isdir(grub_dir):
+            grub_dir = os.path.join(lpss_mnt, 'grub')
+        check_file(grub_dir, 'GRUB directory')
+        check_file(os.path.join(grub_dir, 'x86_64-efi'), 'GRUB modules dir')
+        check_file(os.path.join(esp_mnt, 'EFI', 'BOOT', 'BOOTX64.EFI'),
+                   'LPSS BOOTX64.EFI')
+        check_file(os.path.join(grub_dir, 'grub.cfg'), 'LPSS themed grub.cfg')
 
-    check_file(os.path.join(lpss_dir, 'lpss.conf'), 'lpss.conf')
-    check_file_contains(os.path.join(lpss_dir, 'lpss.conf'), fake_uuid, 'UUID in lpss.conf')
-    check_file(os.path.join(lpss_dir, 'flags'), 'flags directory')
-    check_file(os.path.join(lpss_dir, 'grub.cfg'), 'grub.cfg (main)')
-    check_file(os.path.join(lpss_dir, 'grubenv'), 'grubenv')
-    check_file(os.path.join(esp_dir, 'EFI/LPSS/grubx64.efi'), 'grubx64.efi')
-    check_file_contains(os.path.join(esp_dir, 'EFI/LPSS/grub.cfg'), 'search --fs-uuid', 'ESP bootstrap config')
+        rootfs_dir = os.path.join(base, 'rootfs')
+        os.makedirs(rootfs_dir + '/boot', exist_ok=True)
+        kernel_path = os.path.join(rootfs_dir, 'boot/vmlinuz-5.10.0')
+        initrd_path = os.path.join(rootfs_dir, 'boot/initrd.img-5.10.0')
+        open(kernel_path, 'w').close()
+        open(initrd_path, 'w').close()
 
-    # Prepare fake rootfs
-    kernel_path = os.path.join(rootfs_dir, 'boot/vmlinuz-5.10.0')
-    initrd_path = os.path.join(rootfs_dir, 'boot/initrd.img-5.10.0')
-    open(kernel_path, 'w').close()
-    open(initrd_path, 'w').close()
+        print("\n=== 2. lpss_import ===")
+        run([lpss_import,
+             '--lpss-dir', lpss_mnt,
+             '--root', rootfs_dir,
+             '--id', 'testlinux',
+             '--locator', 'label:root.test'],
+            env=env, check=True)
 
-    # 2. Import entry
-    print("\n=== 2. lpss_import ===")
-    run([lpss_import,
-         '--lpss-dir', lpss_dir,
-         '--root', rootfs_dir,
-         '--id', 'testlinux',
-         '--locator', 'partlabel:root.test'],
-        env=env, check=True)
+        check_file_contains(os.path.join(lpss_mnt, 'lpss.conf'),
+                            '[entry.testlinux]', 'entry added')
+        check_file_contains(os.path.join(grub_dir, 'grub.cfg'),
+                            'menuentry "testlinux"', 'grub.cfg updated')
 
-    check_file_contains(os.path.join(lpss_dir, 'lpss.conf'), '[entry.testlinux]', 'entry added')
-    check_file_contains(os.path.join(lpss_dir, 'grub.cfg'), 'menuentry "testlinux"', 'grub.cfg updated')
+        print("\n=== 3. lpss_ctl enable + activate + apply ===")
+        run([lpss_ctl, '--lpss-dir', lpss_mnt, 'enable', 'testlinux'],
+            env=env, check=True)
+        run([lpss_ctl, '--lpss-dir', lpss_mnt, 'activate', 'testlinux'],
+            env=env, check=True)
+        run([lpss_ctl, '--lpss-dir', lpss_mnt, 'apply'],
+            env=env, check=True)
 
-    # 3. Enable, activate, apply
-    print("\n=== 3. lpss_ctl enable + activate + apply ===")
-    run([lpss_ctl, '--lpss-dir', lpss_dir, 'enable', 'testlinux'], env=env, check=True)
-    run([lpss_ctl, '--lpss-dir', lpss_dir, 'activate', 'testlinux'], env=env, check=True)
-    run([lpss_ctl, '--lpss-dir', lpss_dir, 'apply'], env=env, check=True)
-
-    flags_dir = os.path.join(lpss_dir, 'flags')
-    check_flag_exists(flags_dir, 'testlinux', 'enabled')
-    check_flag_exists(flags_dir, 'testlinux', 'active')
-
-    # 4. Trial boot
-    if real_editenv:
-        print("\n=== 4. lpss_ctl boot (trial) ===")
-        run([lpss_ctl, '--lpss-dir', lpss_dir, 'boot', 'testlinux'], env=env, check=True)
-        check_file_contains(os.path.join(lpss_dir, 'grubenv'), 'next_entry=entry_testlinux', 'grubenv trial set')
-
-        print("\n=== 5. lpss_ctl confirm ===")
-        fake_cmdline = os.path.join(base, 'fake_cmdline')
-        with open(fake_cmdline, 'w') as f:
-            f.write('lpss_entry=testlinux lpss_trial=1 quiet')
-        env['LPSS_CMDLINE_FILE'] = fake_cmdline
-        run([lpss_ctl, '--lpss-dir', lpss_dir, 'confirm'], env=env, check=True)
+        flags_dir = os.path.join(lpss_mnt, 'flags')
+        check_flag_exists(flags_dir, 'testlinux', 'enabled')
         check_flag_exists(flags_dir, 'testlinux', 'active')
-        print("  [INFO] confirm with trial succeeded.")
 
-        # Negative test: missing trial flag
-        with open(fake_cmdline, 'w') as f:
-            f.write('lpss_entry=testlinux quiet')
-        result = run([lpss_ctl, '--lpss-dir', lpss_dir, 'confirm'],
-                     env=env, capture_output=True, text=True)
-        if result.returncode != 0 and 'not a trial' in result.stderr:
-            print("  [PASS] confirm with missing trial flag correctly rejected")
+        editenv = find_grub_tool('editenv')
+        if editenv:
+            print("\n=== 4. lpss_ctl boot (trial) ===")
+            run([lpss_ctl, '--lpss-dir', lpss_mnt, 'boot', 'testlinux'],
+                env=env, check=True)
+            check_file_contains(os.path.join(grub_dir, 'grubenv'),
+                                'next_entry=entry_testlinux',
+                                'grubenv trial set')
+
+            print("\n=== 5. lpss_ctl confirm ===")
+            fake_cmdline = os.path.join(base, 'fake_cmdline')
+            with open(fake_cmdline, 'w') as f:
+                f.write('lpss_entry=testlinux lpss_trial=1 quiet')
+            env['LPSS_CMDLINE_FILE'] = fake_cmdline
+            run([lpss_ctl, '--lpss-dir', lpss_mnt, 'confirm'],
+                env=env, check=True)
+            check_flag_exists(flags_dir, 'testlinux', 'active')
+            print("  [INFO] confirm with trial succeeded.")
+
+            with open(fake_cmdline, 'w') as f:
+                f.write('lpss_entry=testlinux quiet')
+            result = run([lpss_ctl, '--lpss-dir', lpss_mnt, 'confirm'],
+                         env=env, capture_output=True, text=True)
+            if result.returncode != 0 and 'not a trial' in result.stderr:
+                print("  [PASS] confirm missing trial flag correctly rejected")
+            else:
+                print("  [FAIL] confirm should have rejected missing trial flag")
         else:
-            print("  [FAIL] confirm should have rejected missing trial flag")
-    else:
-        print("\n=== Trial boot tests skipped (no grub-editenv) ===")
+            print("\n=== Trial boot tests skipped (no grub-editenv) ===")
+
+    finally:
+        run(['umount', lpss_mnt], check=False)
+        run(['umount', esp_mnt], check=False)
+        if os.path.exists(lpss_img):
+            os.remove(lpss_img)
+        if os.path.exists(esp_img):
+            os.remove(esp_img)
 
     print("\n=== Smoke test summary ===")
     print("Check the output above for PASS/FAIL lines.")

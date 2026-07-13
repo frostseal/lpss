@@ -12,21 +12,14 @@ Every modifying operation prints the exact filesystem paths affected.
 import argparse
 import os
 import sys
-import shutil
 import subprocess
+
 from lib.config import load_config
-from lib.flags import read_flags, create_flag, remove_flag, has_flag
+from lib.flags import (read_flags, create_flag, remove_flag, has_flag)
 from lib.grub import generate_grub_cfg
-
-
-def _read_cmdline():
-    """Return kernel command-line string."""
-    cmdline_path = os.environ.get('LPSS_CMDLINE_FILE', '/proc/cmdline')
-    try:
-        with open(cmdline_path) as f:
-            return f.read()
-    except FileNotFoundError:
-        return ""
+from lib.utils import (get_grub_subdir, find_grub_tool,
+                       parse_cmdline, menu_entry_exists,
+                       activate_role)
 
 
 def _get_lpss_dir(args_lpss_dir=None):
@@ -35,23 +28,15 @@ def _get_lpss_dir(args_lpss_dir=None):
     return os.environ.get('LPSS_MOUNT', '/mnt/lpss')
 
 
-def _find_grub_tool(name: str) -> str:
-    for candidate in [f'grub-{name}', f'grub2-{name}']:
-        if shutil.which(candidate):
-            return candidate
-    return None
-
-
 def _check_mount_point(path):
-    """Warn if path is not a mount point."""
     if not os.path.ismount(path):
         print(f"Warning: {path} is not a mount point. "
-              "Make sure the LPSS partition is mounted.", file=sys.stderr)
+              "Make sure the LPSS partition is mounted.",
+              file=sys.stderr)
 
 
 def _read_grubenv_next_entry(grubenv_path):
-    """Return next_entry value from grubenv, or None."""
-    editenv = _find_grub_tool('editenv')
+    editenv = find_grub_tool('editenv')
     if not editenv:
         return None
     try:
@@ -79,10 +64,12 @@ def main():
     subparsers.add_parser('current',
                           help='Show current booted entry')
 
-    boot_parser = subparsers.add_parser('boot', help='Set a one-shot trial boot')
+    boot_parser = subparsers.add_parser('boot',
+                                        help='Set a one-shot trial boot')
     boot_parser.add_argument('entry', help='Entry ID to boot')
 
-    subparsers.add_parser('confirm', help='Confirm a trial boot, making it permanent')
+    subparsers.add_parser('confirm',
+                          help='Confirm a trial boot, making it permanent')
 
     enable_parser = subparsers.add_parser('enable', help='Enable an entry')
     enable_parser.add_argument('entry', help='Entry ID')
@@ -90,7 +77,8 @@ def main():
     disable_parser = subparsers.add_parser('disable', help='Disable an entry')
     disable_parser.add_argument('entry', help='Entry ID')
 
-    activate_parser = subparsers.add_parser('activate', help='Activate an entry')
+    activate_parser = subparsers.add_parser('activate',
+                                            help='Activate an entry')
     activate_parser.add_argument('entry', help='Entry ID')
 
     subparsers.add_parser('apply',
@@ -99,74 +87,73 @@ def main():
     args = parser.parse_args()
     lpss_dir = _get_lpss_dir(args.lpss_dir)
 
+    # ---- current ---------------------------------------------------------
     if args.command == 'current':
-        cmdline = _read_cmdline()
-        lpss_entry = None
-        for param in cmdline.split():
-            if param.startswith('lpss_entry='):
-                lpss_entry = param.split('=', 1)[1]
-                break
-        if lpss_entry:
-            print(lpss_entry)
+        cmd = parse_cmdline()
+        if cmd['lpss_entry']:
+            print(cmd['lpss_entry'])
         else:
             print("Not booted under LPSS or lpss_entry missing")
         return
 
-    # Validate LPSS directory
+    # ---- validate LPSS environment ---------------------------------------
     _check_mount_point(lpss_dir)
     config_path = os.path.join(lpss_dir, 'lpss.conf')
-    flags_dir = os.path.join(lpss_dir, 'flags')
-    grubenv_path = os.path.join(lpss_dir, 'grubenv')
-    grub_cfg_path = os.path.join(lpss_dir, 'grub.cfg')
-
     if not os.path.isfile(config_path):
         print(f"Error: {lpss_dir} does not appear to be an LPSS partition "
               "(no lpss.conf)", file=sys.stderr)
         sys.exit(1)
 
     config = load_config(config_path)
-    flags = read_flags(flags_dir)
+    flags_dir = os.path.join(lpss_dir, 'flags')
 
+    # GRUB subdirectory
+    grub_subdir = get_grub_subdir(lpss_dir)
+    if not grub_subdir:
+        print("Error: cannot find GRUB directory (grub2 or grub) in "
+              f"{lpss_dir}.", file=sys.stderr)
+        sys.exit(1)
+    grub_cfg_path = os.path.join(lpss_dir, grub_subdir, 'grub.cfg')
+    grubenv_path = os.path.join(lpss_dir, grub_subdir, 'grubenv')
+
+    # ---- status ---------------------------------------------------------
     if args.command == 'status':
+        flags = read_flags(flags_dir)
         print(f"LPSS UUID: {config.uuid}")
         print(f"Version: {config.version}")
-        print("Entries:")
         for eid, entry in config.entries.items():
             f = flags.get(eid, set())
             enabled = 'enabled' in f
             active = 'active' in f
-            print(f"  {eid}: enabled={enabled}, active={active}, role={entry.role}")
+            print(f"\n{eid}")
+            print(f"  role: {entry.role}")
+            print(f"  enabled: {'yes' if enabled else 'no'}")
+            print(f"  active: {'yes' if active else 'no'}")
 
         next_entry = _read_grubenv_next_entry(grubenv_path)
         if next_entry:
-            print(f"Pending one-shot boot: {next_entry}")
+            print(f"\nPending one-shot boot: {next_entry}")
 
-        cmdline = _read_cmdline()
-        for param in cmdline.split():
-            if param.startswith('lpss_entry='):
-                print(f"Current boot entry: {param.split('=', 1)[1]}")
-                break
+        cmd = parse_cmdline()
+        if cmd['lpss_entry']:
+            print(f"Current boot entry: {cmd['lpss_entry']}")
 
+    # ---- list ------------------------------------------------------------
     elif args.command == 'list':
         for eid in config.entries:
             print(eid)
 
+    # ---- boot ------------------------------------------------------------
     elif args.command == 'boot':
         entry_id = args.entry
         if entry_id not in config.entries:
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
 
-        # Check grub.cfg exists and contains the corresponding menu entry
-        if not os.path.exists(grub_cfg_path):
-            print(f"Error: {grub_cfg_path} missing. Run 'apply' first.",
+        if not menu_entry_exists(grub_cfg_path, entry_id):
+            print(f"Error: grub.cfg does not contain menu entry for "
+                  f"'{entry_id}'. Run 'apply' to regenerate.",
                   file=sys.stderr)
-            sys.exit(1)
-        with open(grub_cfg_path) as f:
-            cfg = f.read()
-        if f'--id=entry_{entry_id}' not in cfg:
-            print(f"Error: grub.cfg does not contain menu entry for '{entry_id}'."
-                  " Run 'apply' to regenerate.", file=sys.stderr)
             sys.exit(1)
 
         if not has_flag(flags_dir, entry_id, 'enabled'):
@@ -175,65 +162,50 @@ def main():
                   file=sys.stderr)
 
         next_entry = f'entry_{entry_id}'
-        editenv_cmd = _find_grub_tool('editenv')
-        if not editenv_cmd:
+        editenv = find_grub_tool('editenv')
+        if not editenv:
             print("Error: grub-editenv not found", file=sys.stderr)
             sys.exit(1)
 
-        cmd = [editenv_cmd, grubenv_path, 'set', f'next_entry={next_entry}']
+        cmd = [editenv, grubenv_path, 'set', f'next_entry={next_entry}']
         try:
             subprocess.run(cmd, check=True)
             print(f"Updated {grubenv_path}: set next_entry={next_entry}")
             print(f"One-shot boot for '{entry_id}' set. Reboot to test.")
         except subprocess.CalledProcessError as e:
-            print(f"{editenv_cmd} failed: {e}", file=sys.stderr)
+            print(f"{editenv} failed: {e}", file=sys.stderr)
             sys.exit(1)
 
+    # ---- confirm ---------------------------------------------------------
     elif args.command == 'confirm':
-        cmdline = _read_cmdline()
-        trial = False
-        lpss_entry = None
-        for param in cmdline.split():
-            if param == 'lpss_trial=1':
-                trial = True
-            elif param.startswith('lpss_entry='):
-                lpss_entry = param.split('=', 1)[1]
-        if not trial:
+        cmd = parse_cmdline()
+        if not cmd['lpss_trial']:
             print("Error: current boot is not a trial (lpss_trial=1 missing)",
                   file=sys.stderr)
             sys.exit(1)
-        if not lpss_entry:
+        entry_id = cmd['lpss_entry']
+        if not entry_id:
             print("Error: lpss_entry missing", file=sys.stderr)
             sys.exit(1)
-        if lpss_entry not in config.entries:
-            print(f"Error: entry '{lpss_entry}' not in configuration",
+        if entry_id not in config.entries:
+            print(f"Error: entry '{entry_id}' not in configuration",
                   file=sys.stderr)
             sys.exit(1)
 
-        role = config.entries[lpss_entry].role
-        # First, ensure new entry is enabled and active
-        enabled_flag = os.path.join(flags_dir, lpss_entry, 'enabled')
-        if not has_flag(flags_dir, lpss_entry, 'enabled'):
-            create_flag(flags_dir, lpss_entry, 'enabled')
-            print(f"Created {enabled_flag}")
-        else:
-            create_flag(flags_dir, lpss_entry, 'enabled')
-            print(f"Ensured {enabled_flag} exists")
-
-        active_flag = os.path.join(flags_dir, lpss_entry, 'active')
-        create_flag(flags_dir, lpss_entry, 'active')
-        print(f"Created {active_flag}")
-
-        # Now remove active from other entries of the same role
-        for eid, entry in config.entries.items():
-            if entry.role == role and eid != lpss_entry:
-                flag_path = os.path.join(flags_dir, eid, 'active')
+        role = config.entries[entry_id].role
+        activate_role(flags_dir, config, role, entry_id,
+                      create=create_flag, remove=remove_flag, has=has_flag)
+        enabled_path = os.path.join(flags_dir, entry_id, 'enabled')
+        active_path = os.path.join(flags_dir, entry_id, 'active')
+        print(f"Ensured {enabled_path} exists")
+        print(f"Created {active_path}")
+        for eid, e in config.entries.items():
+            if e.role == role and eid != entry_id:
                 if has_flag(flags_dir, eid, 'active'):
-                    remove_flag(flags_dir, eid, 'active')
-                    print(f"Removed {flag_path}")
+                    print(f"Removed {os.path.join(flags_dir, eid, 'active')}")
+        print(f"Entry '{entry_id}' confirmed as active for role '{role}'.")
 
-        print(f"Entry '{lpss_entry}' confirmed as active for role '{role}'.")
-
+    # ---- enable ---------------------------------------------------------
     elif args.command == 'enable':
         entry_id = args.entry
         if entry_id not in config.entries:
@@ -244,6 +216,7 @@ def main():
         print(f"Created {flag_path}")
         print(f"Entry '{entry_id}' enabled.")
 
+    # ---- disable --------------------------------------------------------
     elif args.command == 'disable':
         entry_id = args.entry
         if entry_id not in config.entries:
@@ -261,6 +234,7 @@ def main():
             print(f"{flag_path} already absent")
         print(f"Entry '{entry_id}' disabled.")
 
+    # ---- activate --------------------------------------------------------
     elif args.command == 'activate':
         entry_id = args.entry
         if entry_id not in config.entries:
@@ -273,23 +247,19 @@ def main():
             sys.exit(1)
 
         role = config.entries[entry_id].role
-        # First set the new active
-        active_flag = os.path.join(flags_dir, entry_id, 'active')
-        create_flag(flags_dir, entry_id, 'active')
-        print(f"Created {active_flag}")
-
-        # Then remove from others
-        for eid, entry in config.entries.items():
-            if entry.role == role and eid != entry_id:
-                flag_path = os.path.join(flags_dir, eid, 'active')
+        activate_role(flags_dir, config, role, entry_id,
+                      create=create_flag, remove=remove_flag, has=has_flag)
+        active_path = os.path.join(flags_dir, entry_id, 'active')
+        print(f"Created {active_path}")
+        for eid, e in config.entries.items():
+            if e.role == role and eid != entry_id:
                 if has_flag(flags_dir, eid, 'active'):
-                    remove_flag(flags_dir, eid, 'active')
-                    print(f"Removed {flag_path}")
-
+                    print(f"Removed {os.path.join(flags_dir, eid, 'active')}")
         print(f"Entry '{entry_id}' activated for role '{role}'.")
 
+    # ---- apply -----------------------------------------------------------
     elif args.command == 'apply':
-        generate_grub_cfg(config, flags, grub_cfg_path)
+        generate_grub_cfg(config, grub_cfg_path)
         print(f"Generated {grub_cfg_path}")
 
     else:

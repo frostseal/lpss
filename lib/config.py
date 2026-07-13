@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
 # @file lib/config.py
 """
-LPSS configuration file parser.
+LPSS configuration file parser and writer.
 
-Reads and validates lpss.conf (INI-like format).
-Provides read-only access to LPSS id, version, and entry definitions.
+Reads and writes lpss.conf (INI-like format).  Entries are kept in
+insertion order.
 """
 
 import configparser
@@ -44,24 +44,25 @@ class LPSSConfig:
     Provides:
       - uuid: LPSS partition UUID (string)
       - version: configuration version (int)
-      - entries: dict mapping entry_id -> EntryDef
+      - entries: dict mapping entry_id -> EntryDef  (insertion ordered)
     """
 
-    def __init__(self, path: str):
-        self._path = path
+    def __init__(self, path: str = None):
         self.uuid: str = ""
         self.version: int = 1
         self.entries: Dict[str, EntryDef] = {}
-        self._parse()
+        if path:
+            self._parse(path)
 
-    def _parse(self) -> None:
-        if not os.path.isfile(self._path):
-            raise LPSSConfigError(f"Configuration file not found: {self._path}")
+    # ---- parsing ---------------------------------------------------------
+
+    def _parse(self, path: str) -> None:
+        if not os.path.isfile(path):
+            raise LPSSConfigError(f"Configuration file not found: {path}")
 
         parser = configparser.ConfigParser()
-        parser.read(self._path)
+        parser.read(path)
 
-        # [lpss] section
         if not parser.has_section('lpss'):
             raise LPSSConfigError("Missing [lpss] section in lpss.conf")
 
@@ -75,7 +76,6 @@ class LPSSConfig:
         except ValueError:
             raise LPSSConfigError("[lpss] version must be an integer")
 
-        # Entry sections
         entry_pattern = re.compile(r'^entry\.(.+)$')
         for section_name in parser.sections():
             m = entry_pattern.match(section_name)
@@ -84,7 +84,6 @@ class LPSSConfig:
             entry_id = m.group(1)
             sect = parser[section_name]
 
-            # Mandatory fields
             role = sect.get('role', 'root').strip()
             locator = sect.get('locator', '').strip()
             linux = sect.get('linux', '').strip()
@@ -111,31 +110,59 @@ class LPSSConfig:
                 options=options,
             )
 
-    def get_entry(self, entry_id: str) -> Optional[EntryDef]:
-        """Return the EntryDef for a given id, or None."""
-        return self.entries.get(entry_id)
+    # ---- mutation --------------------------------------------------------
+
+    def add_entry(self, entry_id: str, role: str, locator: str,
+                  linux: str, initrd: str, options: str = "") -> None:
+        """Add a new entry. Raises LPSSConfigError if id already exists."""
+        if entry_id in self.entries:
+            raise LPSSConfigError(f"Entry '{entry_id}' already exists")
+        self.entries[entry_id] = EntryDef(
+            entry_id=entry_id,
+            role=role,
+            locator=locator,
+            linux=linux,
+            initrd=initrd,
+            options=options,
+        )
+
+    def update_entry(self, entry_id: str, role: str, locator: str,
+                     linux: str, initrd: str, options: str = "") -> None:
+        """Update an existing entry.  Creates it if not present."""
+        self.entries[entry_id] = EntryDef(
+            entry_id=entry_id,
+            role=role,
+            locator=locator,
+            linux=linux,
+            initrd=initrd,
+            options=options,
+        )
+
+    # ---- serialisation ---------------------------------------------------
+
+    def save(self, path: str) -> None:
+        """Write the configuration back to an INI file."""
+        lines = []
+        lines.append("[lpss]")
+        lines.append(f"id={self.uuid}")
+        lines.append(f"version={self.version}")
+        lines.append("")
+
+        for eid, entry in self.entries.items():
+            lines.append(f"[entry.{eid}]")
+            lines.append(f"id={entry.id}")
+            lines.append(f"role={entry.role}")
+            lines.append(f"locator={entry.locator}")
+            lines.append(f"linux={entry.linux}")
+            lines.append(f"initrd={entry.initrd}")
+            if entry.options:
+                lines.append(f"options={entry.options}")
+            lines.append("")
+
+        with open(path, 'w') as f:
+            f.write("\n".join(lines).rstrip("\n") + "\n")
 
 
 def load_config(path: str) -> LPSSConfig:
     """Load and validate lpss.conf from a given path."""
     return LPSSConfig(path)
-
-
-# Simple test when run directly
-if __name__ == '__main__':
-    import sys
-    if len(sys.argv) != 2:
-        print("Usage: config.py <path/to/lpss.conf>")
-        sys.exit(1)
-    try:
-        cfg = load_config(sys.argv[1])
-        print(f"LPSS UUID: {cfg.uuid}")
-        print(f"Version: {cfg.version}")
-        print("Entries:")
-        for eid, entry in cfg.entries.items():
-            print(f"  {eid}: role={entry.role}, locator={entry.locator}, "
-                  f"linux={entry.linux}, initrd={entry.initrd}, "
-                  f"options={entry.options}")
-    except LPSSConfigError as e:
-        print(f"Error: {e}")
-        sys.exit(1)
