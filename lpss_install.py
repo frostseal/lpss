@@ -98,15 +98,11 @@ def main():
         os.makedirs(app_dst, exist_ok=True)
 
         # Python scripts
-        for fname in ['lpss_ctl.py', 'lpss_import.py', 'lpss_install.py']:
+        for fname in ['lpss_ctl.py', 'lpss_import.py', 'lpss_install.py',
+                      'lpss_app_install.py']:
             src = os.path.join(project_root, fname)
             if os.path.isfile(src):
                 shutil.copy2(src, os.path.join(app_dst, fname))
-
-        # Makefile
-        makefile_src = os.path.join(project_root, 'Makefile')
-        if os.path.isfile(makefile_src):
-            shutil.copy2(makefile_src, os.path.join(app_dst, 'Makefile'))
 
         # lib/
         lib_src = os.path.join(project_root, 'lib')
@@ -196,7 +192,7 @@ def main():
     # ------------------------------------------------------------------
     print(f"\nLPSS {'tools' if do_tools else ''}{' and ' if do_tools and do_grub else ''}{'GRUB' if do_grub else ''} installed successfully on {lpss_dir}.")
     if do_tools:
-        print("Use 'python3 /mnt/lpss/app/lpss_ctl.py ...' from a booted slot.")
+        print("Use 'LPSS_DIR/app/lpss_app_install.py' to install the tools.")
     if do_grub:
         print("You can now import Linux systems with 'lpss_import'.")
 
