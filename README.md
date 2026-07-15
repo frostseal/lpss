@@ -76,10 +76,16 @@ The entry is available for manual or automatic boot.
 The default entry for a role (only one per role).  `default` implies
 `enabled`.
 
-### Trial
-A one-shot boot performed via GRUB’s `grub-reboot`.  The kernel
-command line receives `lpss_trial=1`.  After a successful test,
-`lpss_ctl confirm` makes the trial entry permanent.
+### One-shot boot
+Boot a specific entry exactly once without changing any persistent
+state.  The next boot returns to the default.  Use `lpss_ctl boot`.
+
+### Trial boot
+Try to switch current default entry to another entry
+A transactional try-boot that requires confirmation after boot. The kernel command
+line receives `lpss_trial=1`.  After a successful test,
+`lpss_ctl confirm` makes the trial entry the new default.  Use
+`lpss_ctl trial`.
 
 ---
 
@@ -173,14 +179,22 @@ lpss_ctl --lpss-dir /mnt/lpss apply        # regenerate grub.cfg
 
 Now `arch` will boot automatically.
 
-### 6. Trial‑boot another entry
+### 6. Test another entry
+
+**One-shot boot** (no persistent changes):
 ```bash
 lpss_ctl --lpss-dir /mnt/lpss boot opensuse
 reboot
 ```
+The system boots `opensuse` once, then reverts to the default.
 
-The system starts `opensuse` once with `lpss_trial=1` on the kernel
-command line.  If everything works, make it the permanent default:
+**Trial boot** (requires confirmation):
+```bash
+lpss_ctl --lpss-dir /mnt/lpss trial opensuse
+reboot
+```
+The system boots `opensuse` with `lpss_trial=1`.  If everything works,
+make it the permanent default:
 
 ```bash
 lpss_ctl --lpss-dir /mnt/lpss confirm
@@ -233,13 +247,13 @@ filesystem.  Supported types:
 All tools accept `--lpss-dir` (preferred) or the environment variable
 `LPSS_MOUNT`.  If both are omitted, `/mnt/lpss` is used.
 
-| Tool           | Purpose |
-|----------------|---------|
-| `lpss_install` | Install LPSS infrastructure onto an already‑prepared partition. |
-| `lpss_import`  | Register an existing Linux installation as an LPSS entry. |
-| `lpss_ctl`     | Manage entries —  `enable`, `disable`, `default`, ... |
-| `lpss_app_install` | (optional) Create symlinks for LPSS tools without needing make. |
-| `lpss_check`   | (planned) Diagnose configuration consistency. |
+| Tool              | Purpose |
+|-------------------|---------|
+| `lpss_install`    | Install LPSS infrastructure onto an already‑prepared partition. |
+| `lpss_import`     | Register an existing Linux installation as an LPSS entry. |
+| `lpss_ctl`        | Manage entries — `enable`, `disable`, `default`, `boot`, `trial`, `confirm`, `apply`, `status`, `list`, `current`. |
+| `lpss_app_install`| (optional) Create symlinks for LPSS tools without needing make. |
+| `lpss_check`      | (planned) Diagnose configuration consistency. |
 
 `lpss_ctl current` reads the running entry from `/proc/cmdline`.
 For testing, you can override the command line with the environment
@@ -287,18 +301,20 @@ Invariants (enforced by `lpss_ctl`):
 - only one entry per role may be default,
 - disabling a default entry is rejected.
 
-Trial state is stored **only** in GRUB’s `grubenv` (the `next_entry`
-variable).
+One‑shot and trial boot targets are stored exclusively in GRUB’s
+`grubenv` as `next_entry=once_<id>` and `next_entry=entry_<id>`
+respectively.
 
 ### Boot flow
 1. EFI starts GRUB (installed by the distribution’s `grub-install`
    at the standard removable path).
 2. GRUB loads the main `grub.cfg` from the LPSS partition.
-3. The themed menu shows an `Automatic` entry and all registered
+3. The themed menu shows a `Default boot` entry and all registered
    Linux slots.
-4. `Automatic` boots the default+enabled entry (or the first enabled
-   if none is default).
-5. Manual selection triggers a one‑shot trial boot.
+4. `Default boot` selects the default+enabled entry (or the first
+   enabled if no default is set).
+5. Manual selection allows either a one‑shot boot (`Boot once: …`)
+   or a trial boot (`Try to switch to: …`).
 6. After a successful trial, `lpss_ctl confirm` promotes the entry
    to default.
 
@@ -342,4 +358,3 @@ LPSS keeps Linux systems simple:
 
 **A Linux installation should be replaceable like any other component
 of the system.**
-

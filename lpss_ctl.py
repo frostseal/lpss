@@ -40,6 +40,7 @@ def _check_mount_point(path):
 
 
 def _read_grubenv_next_entry(grubenv_path):
+    """Return the next_entry value from grubenv, or None if not set."""
     editenv = find_grub_tool('editenv')
     if not editenv:
         return None
@@ -59,34 +60,59 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('--lpss-dir',
-                        help='Path to mounted LPSS partition')
+    parser.add_argument(
+        '--lpss-dir',
+        help='Path to mounted LPSS partition'
+    )
     subparsers = parser.add_subparsers(dest='command', required=True)
 
     subparsers.add_parser('status', help='Show overall LPSS status')
     subparsers.add_parser('list', help='List all registered entries')
-    subparsers.add_parser('current',
-                          help='Show current booted entry')
+    subparsers.add_parser(
+        'current',
+        help='Show current booted entry'
+    )
 
-    boot_parser = subparsers.add_parser('boot',
-                                        help='Set a one-shot trial boot')
-    boot_parser.add_argument('entry', help='Entry ID to boot')
+    # One-shot boot (no trial)
+    boot_parser = subparsers.add_parser(
+        'boot',
+        help='One-shot boot – no persistent changes'
+    )
+    boot_parser.add_argument('entry', help='Entry ID to boot once')
 
-    subparsers.add_parser('confirm',
-                          help='Confirm a trial boot, making it the default')
+    # Trial boot (requires confirm)
+    trial_parser = subparsers.add_parser(
+        'trial',
+        help=('Try to switch default with trial boot '
+              '(require confirm after boot)')
+    )
+    trial_parser.add_argument('entry', help='Entry ID for trial')
 
-    enable_parser = subparsers.add_parser('enable', help='Enable an entry')
+    subparsers.add_parser(
+        'confirm',
+        help='Confirm a trial boot, making it the default'
+    )
+
+    enable_parser = subparsers.add_parser(
+        'enable', help='Enable an entry'
+    )
     enable_parser.add_argument('entry', help='Entry ID')
 
-    disable_parser = subparsers.add_parser('disable', help='Disable an entry')
+    disable_parser = subparsers.add_parser(
+        'disable', help='Disable an entry'
+    )
     disable_parser.add_argument('entry', help='Entry ID')
 
-    default_parser = subparsers.add_parser('default',
-                                           help='Set an entry as the default for its role')
+    default_parser = subparsers.add_parser(
+        'default',
+        help='Set an entry as the default for its role'
+    )
     default_parser.add_argument('entry', help='Entry ID')
 
-    subparsers.add_parser('apply',
-                          help='Regenerate grub.cfg from current configuration')
+    subparsers.add_parser(
+        'apply',
+        help='Regenerate grub.cfg from current configuration'
+    )
 
     args = parser.parse_args()
     lpss_dir = _get_lpss_dir(args.lpss_dir)
@@ -134,20 +160,38 @@ def main():
             print(f"  enabled: {'yes' if enabled else 'no'}")
             print(f"  default: {'yes' if default else 'no'}")
 
-        next_entry = _read_grubenv_next_entry(grubenv_path)
-        if next_entry:
-            print(f"\nPending one-shot boot: {next_entry}")
-
+        # Boot state section
+        print("\nBoot state:")
         cmd = parse_cmdline()
-        if cmd['lpss_entry']:
-            print(f"Current boot entry: {cmd['lpss_entry']}")
+        current = cmd['lpss_entry'] or 'none'
+        print(f"  current: {current}")
+
+        # Find default entry for 'root' role (simplified: show first default)
+        default_entry = None
+        for eid, f in flags.items():
+            if 'default' in f:
+                default_entry = eid
+                break
+        print(f"  default: {default_entry or 'none'}")
+
+        next_entry = _read_grubenv_next_entry(grubenv_path)
+        one_shot = None
+        trial = None
+        if next_entry:
+            if next_entry.startswith('once_'):
+                one_shot = next_entry[5:]   # remove 'once_'
+            elif next_entry.startswith('entry_'):
+                trial = next_entry[6:]      # remove 'entry_'
+        print(f"  one-shot: {one_shot or 'none'}")
+        trial_status = f"{trial} (pending confirmation)" if trial else 'none'
+        print(f"  trial: {trial_status}")
 
     # ---- list ------------------------------------------------------------
     elif args.command == 'list':
         for eid in config.entries:
             print(eid)
 
-    # ---- boot ------------------------------------------------------------
+    # ---- boot (one-shot) -------------------------------------------------
     elif args.command == 'boot':
         entry_id = args.entry
         if entry_id not in config.entries:
@@ -162,7 +206,42 @@ def main():
 
         if not has_flag(flags_dir, entry_id, 'enabled'):
             print(f"Warning: entry '{entry_id}' is not enabled; "
-                  "trial boot may fail if it's disabled in menu.",
+                  "one-shot boot may not appear in default menu.",
+                  file=sys.stderr)
+
+        next_entry = f'once_{entry_id}'
+        editenv = find_grub_tool('editenv')
+        if not editenv:
+            print("Error: grub-editenv not found", file=sys.stderr)
+            sys.exit(1)
+
+        cmd = [editenv, grubenv_path, 'set', f'next_entry={next_entry}']
+        try:
+            subprocess.run(cmd, check=True)
+            print(f"Updated {grubenv_path}: set next_entry={next_entry}")
+            print(f"One-shot boot configured.")
+            print(f"Next boot: {entry_id}")
+            print(f"No persistent changes will be made.")
+        except subprocess.CalledProcessError as e:
+            print(f"{editenv} failed: {e}", file=sys.stderr)
+            sys.exit(1)
+
+    # ---- trial (transactional) -------------------------------------------
+    elif args.command == 'trial':
+        entry_id = args.entry
+        if entry_id not in config.entries:
+            print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
+            sys.exit(1)
+
+        if not menu_entry_exists(grub_cfg_path, entry_id):
+            print(f"Error: grub.cfg does not contain menu entry for "
+                  f"'{entry_id}'. Run 'apply' to regenerate.",
+                  file=sys.stderr)
+            sys.exit(1)
+
+        if not has_flag(flags_dir, entry_id, 'enabled'):
+            print(f"Warning: entry '{entry_id}' is not enabled; "
+                  "trial boot may not appear in default menu.",
                   file=sys.stderr)
 
         next_entry = f'entry_{entry_id}'
@@ -175,7 +254,9 @@ def main():
         try:
             subprocess.run(cmd, check=True)
             print(f"Updated {grubenv_path}: set next_entry={next_entry}")
-            print(f"One-shot boot for '{entry_id}' set. Reboot to test.")
+            print(f"Trial boot configured.")
+            print(f"Next boot: {entry_id}")
+            print(f"Confirmation required.")
         except subprocess.CalledProcessError as e:
             print(f"{editenv} failed: {e}", file=sys.stderr)
             sys.exit(1)

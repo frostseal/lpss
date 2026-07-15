@@ -215,8 +215,8 @@ def main():
         # ---- Trial boot and confirm --------------------------------------
         editenv = find_grub_tool('editenv')
         if editenv:
-            print("\n=== 4. lpss_ctl boot (trial) ===")
-            run([lpss_ctl, '--lpss-dir', lpss_mnt, 'boot', 'testlinux'],
+            print("\n=== 4. lpss_ctl trial (trial boot) ===")
+            run([lpss_ctl, '--lpss-dir', lpss_mnt, 'trial', 'testlinux'],
                 env=env, check=True)
             check_file_contains(os.path.join(grub_dir, 'grubenv'),
                                 'next_entry=entry_testlinux',
