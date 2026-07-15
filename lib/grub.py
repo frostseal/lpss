@@ -66,7 +66,7 @@ BOOT_BLOCK = """\
     if [ "${{chosen}}" = "{entry_id}" ]; then
         {search}
         linux {linux} {params}
-        initrd {initrd}
+{initrd_line}\
         boot
     fi
 """
@@ -82,7 +82,7 @@ BOOT_ONCE_ENTRY = """\
 menuentry "Boot once: {id}" --id=once_{id} --class lpss-once {{
     {search}
     linux {linux} {params}
-    initrd {initrd}
+{initrd_line}\
 }}
 """
 
@@ -90,7 +90,7 @@ TRIAL_ENTRY = """\
 menuentry "Try to switch to: {id}" --id=entry_{id} --class lpss-trial {{
     {search}
     linux {linux} {params}
-    initrd {initrd}
+{initrd_line}\
 }}
 """
 
@@ -147,6 +147,13 @@ def _kernel_params(entry, lpss_uuid: str, trial: bool = False) -> str:
     return " ".join(p for p in params if p)
 
 
+def _initrd_line(entry) -> str:
+    """Return a GRUB initrd command if the entry has an initrd, else empty."""
+    if entry.initrd:
+        return f"        initrd {entry.initrd}\n"
+    return ""
+
+
 # ---- public API ---------------------------------------------------------
 
 def generate_grub_cfg(config: LPSSConfig,
@@ -169,7 +176,7 @@ def generate_grub_cfg(config: LPSSConfig,
         params = _kernel_params(e, lpss_uuid, trial=False)
         dflt += BOOT_BLOCK.format(entry_id=e.id, search=search_cmd,
                                   linux=e.linux, params=params,
-                                  initrd=e.initrd)
+                                  initrd_line=_initrd_line(e))
     dflt += DEFAULT_FOOTER
     cfg += dflt
 
@@ -182,7 +189,7 @@ def generate_grub_cfg(config: LPSSConfig,
         params = _kernel_params(e, lpss_uuid, trial=False)
         cfg += BOOT_ONCE_ENTRY.format(id=e.id, search=search_cmd,
                                       linux=e.linux, params=params,
-                                      initrd=e.initrd)
+                                      initrd_line=_initrd_line(e))
 
     if entries:
         cfg += SEPARATOR
@@ -193,7 +200,7 @@ def generate_grub_cfg(config: LPSSConfig,
         params = _kernel_params(e, lpss_uuid, trial=True)
         cfg += TRIAL_ENTRY.format(id=e.id, search=search_cmd,
                                   linux=e.linux, params=params,
-                                  initrd=e.initrd)
+                                  initrd_line=_initrd_line(e))
 
     cfg += SEPARATOR
     cfg += REBOOT_ENTRY

@@ -34,16 +34,21 @@ def check_file(path, description):
         fail_count += 1
 
 
-def check_file_contains(path, substring, description):
+def check_file_contains(path, substring, description, invert=False):
     global pass_count, fail_count
     try:
         with open(path) as f:
             content = f.read()
-        if substring in content:
+        found = substring in content
+        if (found and not invert) or (not found and invert):
             print(f"  [PASS] {description} ({path})")
             pass_count += 1
         else:
-            print(f"  [FAIL] {description}: '{substring}' not found in {path}")
+            if invert:
+                msg = f"'{substring}' unexpectedly found in {path}"
+            else:
+                msg = f"'{substring}' not found in {path}"
+            print(f"  [FAIL] {description}: {msg}")
             fail_count += 1
     except FileNotFoundError:
         print(f"  [FAIL] {description}: file {path} not found")
@@ -70,6 +75,7 @@ def find_grub_tool(name):
 
 
 def main():
+    global pass_count, fail_count
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--dir', required=True, help='Working directory')
     args = parser.parse_args()
@@ -134,6 +140,7 @@ def main():
                    'LPSS BOOTX64.EFI')
         check_file(os.path.join(grub_dir, 'grub.cfg'), 'LPSS themed grub.cfg')
 
+        # Rootfs with kernel and initrd for testlinux
         rootfs_dir = os.path.join(base, 'rootfs')
         os.makedirs(rootfs_dir + '/boot', exist_ok=True)
         kernel_path = os.path.join(rootfs_dir, 'boot/vmlinuz-5.10.0')
@@ -141,7 +148,7 @@ def main():
         open(kernel_path, 'w').close()
         open(initrd_path, 'w').close()
 
-        print("\n=== 2. lpss_import ===")
+        print("\n=== 2. lpss_import (with initrd) ===")
         run([lpss_import,
              '--lpss-dir', lpss_mnt,
              '--root', rootfs_dir,
@@ -166,6 +173,46 @@ def main():
         check_flag_exists(flags_dir, 'testlinux', 'enabled')
         check_flag_exists(flags_dir, 'testlinux', 'default')
 
+        # ---- Import entry without initrd ---------------------------------
+        print("\n=== 3b. lpss_import (without initrd) ===")
+        rootfs_nointrd_dir = os.path.join(base, 'rootfs_nointrd')
+        os.makedirs(rootfs_nointrd_dir + '/boot', exist_ok=True)
+        kernel_nointrd_path = os.path.join(rootfs_nointrd_dir,
+                                           'boot/vmlinuz-5.10.0')
+        open(kernel_nointrd_path, 'w').close()
+        run([lpss_import,
+             '--lpss-dir', lpss_mnt,
+             '--root', rootfs_nointrd_dir,
+             '--id', 'testnointrd',
+             '--locator', 'label:root.test2'],
+            env=env, check=True)
+
+        check_file_contains(os.path.join(lpss_mnt, 'lpss.conf'),
+                            '[entry.testnointrd]', 'entry testnointrd added')
+        # Verify no initrd= in the testnointrd section specifically
+        with open(os.path.join(lpss_mnt, 'lpss.conf')) as f:
+            full_conf = f.read()
+        start = full_conf.find('[entry.testnointrd]')
+        if start == -1:
+            print("  [FAIL] section [entry.testnointrd] not found")
+            fail_count += 1
+        else:
+            end = full_conf.find('[', start + 1)
+            if end == -1:
+                end = len(full_conf)
+            section_text = full_conf[start:end]
+            if 'initrd=' in section_text:
+                print("  [FAIL] initrd absent for testnointrd: "
+                      "'initrd=' found in section")
+                fail_count += 1
+            else:
+                print("  [PASS] initrd absent for testnointrd")
+                pass_count += 1
+        check_file_contains(os.path.join(grub_dir, 'grub.cfg'),
+                            'entry_testnointrd',
+                            'grub.cfg contains entry_testnointrd')
+
+        # ---- Trial boot and confirm --------------------------------------
         editenv = find_grub_tool('editenv')
         if editenv:
             print("\n=== 4. lpss_ctl boot (trial) ===")
@@ -191,11 +238,9 @@ def main():
                          env=env, capture_output=True, text=True)
             if result.returncode != 0 and 'not a trial' in result.stderr:
                 print("  [PASS] confirm missing trial flag correctly rejected")
-                global pass_count
                 pass_count += 1
             else:
                 print("  [FAIL] confirm should have rejected missing trial flag")
-                global fail_count
                 fail_count += 1
         else:
             print("\n=== Trial boot tests skipped (no grub-editenv) ===")
@@ -217,7 +262,7 @@ def main():
         print("FAILED (errors encountered)")
         sys.exit(1)
     else:
-        print("TOTAL PASS")
+        print("SUCCESS")
         sys.exit(0)
 
 

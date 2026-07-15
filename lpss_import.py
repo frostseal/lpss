@@ -79,31 +79,33 @@ def main():
     linux_path = args.linux
     initrd_path = args.initrd
 
-    if not linux_path or not initrd_path:
+    if not linux_path:
         auto_linux, auto_initrd = find_kernel_initrd_in_root(root_dir)
-        if not linux_path:
-            if auto_linux:
-                linux_path = auto_linux
-                print(f"Auto-detected kernel: {linux_path}")
-            else:
-                print("Error: could not detect kernel in {}/boot. "
-                      "Use --linux.", file=sys.stderr)
-                sys.exit(1)
-        if not initrd_path:
-            if auto_initrd:
-                initrd_path = auto_initrd
-                print(f"Auto-detected initrd: {initrd_path}")
-            else:
-                print("Error: could not detect initrd in {}/boot. "
-                      "Use --initrd.", file=sys.stderr)
-                sys.exit(1)
+        if auto_linux:
+            linux_path = auto_linux
+            print(f"Auto-detected kernel: {linux_path}")
+        else:
+            print("Error: could not detect kernel in {}/boot. "
+                  "Use --linux.", file=sys.stderr)
+            sys.exit(1)
+        # initrd is optional; only override if not explicitly given
+        if initrd_path is None and auto_initrd:
+            initrd_path = auto_initrd
+            print(f"Auto-detected initrd: {initrd_path}")
 
     # ---- validate files exist inside root_dir ----------------------------
-    for desc, rel in [('kernel', linux_path), ('initrd', initrd_path)]:
-        abs_path = os.path.join(root_dir, rel.lstrip('/'))
-        if not os.path.isfile(abs_path):
-            print(f"Error: {desc} not found: {abs_path}", file=sys.stderr)
+    abs_linux = os.path.join(root_dir, linux_path.lstrip('/'))
+    if not os.path.isfile(abs_linux):
+        print(f"Error: kernel not found: {abs_linux}", file=sys.stderr)
+        sys.exit(1)
+
+    if initrd_path:
+        abs_initrd = os.path.join(root_dir, initrd_path.lstrip('/'))
+        if not os.path.isfile(abs_initrd):
+            print(f"Error: initrd not found: {abs_initrd}", file=sys.stderr)
             sys.exit(1)
+    else:
+        print("No initrd specified; entry will be created without one.")
 
     # ---- modify configuration --------------------------------------------
     config = load_config(config_path)
@@ -114,6 +116,9 @@ def main():
               "Use --update to modify.", file=sys.stderr)
         sys.exit(1)
 
+    # Use empty string if initrd_path is None
+    initrd_normalized = f'/{initrd_path.lstrip("/")}' if initrd_path else ''
+
     try:
         if entry_exists and args.update:
             config.update_entry(
@@ -121,7 +126,7 @@ def main():
                 role=args.role,
                 locator=args.locator,
                 linux=f'/{linux_path.lstrip("/")}',
-                initrd=f'/{initrd_path.lstrip("/")}',
+                initrd=initrd_normalized,
                 options=args.options,
             )
             print(f"Updated entry '{args.id}' in memory.")
@@ -131,7 +136,7 @@ def main():
                 role=args.role,
                 locator=args.locator,
                 linux=f'/{linux_path.lstrip("/")}',
-                initrd=f'/{initrd_path.lstrip("/")}',
+                initrd=initrd_normalized,
                 options=args.options,
             )
             print(f"Added entry '{args.id}' to configuration.")

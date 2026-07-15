@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
 # @file lib/config.py
 """
-LPSS configuration file parser and writer.
+LPSS configuration file (lpss.conf) parser and writer.
 
 Reads and writes lpss.conf (INI-like format).  Entries are kept in
 insertion order.
+
+initrd may be empty for configurations that do not use one.
 """
 
 import configparser
@@ -87,7 +89,7 @@ class LPSSConfig:
             role = sect.get('role', 'root').strip()
             locator = sect.get('locator', '').strip()
             linux = sect.get('linux', '').strip()
-            initrd = sect.get('initrd', '').strip()
+            initrd = sect.get('initrd', '').strip()  # may be empty
 
             if not locator:
                 raise LPSSConfigError(
@@ -95,9 +97,6 @@ class LPSSConfig:
             if not linux:
                 raise LPSSConfigError(
                     f"Entry '{entry_id}' missing 'linux' kernel path")
-            if not initrd:
-                raise LPSSConfigError(
-                    f"Entry '{entry_id}' missing 'initrd' path")
 
             options = sect.get('options', '').strip()
 
@@ -138,7 +137,7 @@ class LPSSConfig:
             options=options,
         )
 
-    # ---- serialisation ---------------------------------------------------
+    # ---- serialization ---------------------------------------------------
 
     def save(self, path: str) -> None:
         """Write the configuration back to an INI file."""
@@ -154,14 +153,14 @@ class LPSSConfig:
             lines.append(f"role={entry.role}")
             lines.append(f"locator={entry.locator}")
             lines.append(f"linux={entry.linux}")
-            lines.append(f"initrd={entry.initrd}")
+            if entry.initrd:                           # <-- вот это условие
+                lines.append(f"initrd={entry.initrd}")
             if entry.options:
                 lines.append(f"options={entry.options}")
             lines.append("")
 
         with open(path, 'w') as f:
             f.write("\n".join(lines).rstrip("\n") + "\n")
-
 
 def load_config(path: str) -> LPSSConfig:
     """Load and validate lpss.conf from a given path."""
