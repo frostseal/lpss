@@ -57,6 +57,65 @@ def menu_entry_exists(grub_cfg_path: str, entry_id: str) -> bool:
         return f'--id=entry_{entry_id}' in f.read()
 
 
+# ---- Kernel/initrd detection in a root filesystem -----------------------
+
+_KERNEL_PATTERNS = [
+    "vmlinuz-*", "vmlinuz", "linux-*", "linux",
+    "bzImage-*", "bzImage", "kernel-*", "kernel",
+]
+_INITRD_PATTERNS = [
+    "initramfs-{version}.img",
+    "initrd-{version}.img",
+    "initramfs-{version}",
+    "initrd-{version}",
+    "initrd.img-{version}",
+    "initrd-{version}.gz",
+]
+
+
+def find_kernel_initrd_in_root(root_dir: str):
+    """
+    Locate the most recent kernel and matching initrd in root_dir/boot.
+
+    Returns (relative_kernel_path, relative_initrd_path) or (None, None).
+    """
+    boot_dir = os.path.join(root_dir, 'boot')
+    if not os.path.isdir(boot_dir):
+        return None, None
+
+    candidates = []
+    for pattern in _KERNEL_PATTERNS:
+        candidates.extend(glob.glob(os.path.join(boot_dir, pattern)))
+    if not candidates:
+        return None, None
+
+    kernel = max(candidates, key=os.path.getmtime)
+    base = os.path.basename(kernel)
+    # try to extract version
+    for prefix in ('vmlinuz-', 'linux-', 'bzImage-', 'kernel-'):
+        if base.startswith(prefix):
+            version = base[len(prefix):]
+            break
+    else:
+        version = base
+
+    initrd = None
+    for pattern in _INITRD_PATTERNS:
+        candidate = os.path.join(boot_dir, pattern.format(version=version))
+        if os.path.exists(candidate):
+            initrd = candidate
+            break
+    if not initrd:
+        for name in os.listdir(boot_dir):
+            if name.startswith('initr') and version in name:
+                initrd = os.path.join(boot_dir, name)
+                break
+
+    linux_rel = os.path.relpath(kernel, root_dir) if kernel else None
+    initrd_rel = os.path.relpath(initrd, root_dir) if initrd else None
+    return linux_rel, initrd_rel
+
+
 # ---- Host kernel/initrd discovery ---------------------------------------
 
 def find_host_kernel(kver: str = None) -> str:
@@ -113,7 +172,6 @@ _LOCATOR_DISPATCH = {
     "partlabel": "search --no-floppy --part-label {value} --set=root",
     "label":     "search --no-floppy --label {value} --set=root",
     "fsuuid":    "search --no-floppy --fs-uuid {value} --set=root",
-    # "partuuid":  "search --no-floppy --part-uuid {value} --set=root",
 }
 
 
@@ -131,7 +189,7 @@ def make_search_command(locator: str) -> str:
 
 def validate_locator(locator: str) -> None:
     """Raise ValueError if locator is not recognised."""
-    make_search_command(locator)  # raises if invalid
+    make_search_command(locator)
 
 
 # ---- Flag manipulation helpers ------------------------------------------

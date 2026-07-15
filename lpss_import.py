@@ -10,83 +10,20 @@ Regenerates grub.cfg.
 The LPSS partition can be specified via --lpss-dir, LPSS_MOUNT
 environment variable, or defaults to /mnt/lpss.
 """
-import argparse
 import os
 import sys
+
+# Allow running from copied tools directory (e.g., /mnt/lpss/bin)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
+
+import argparse
 import glob
 
 from lib.config import load_config, LPSSConfigError
 from lib.grub import generate_grub_cfg
-from lib.utils import (get_grub_subdir, validate_locator)
+from lib.utils import (get_grub_subdir, validate_locator,
+                       find_kernel_initrd_in_root)
 
-
-# ---- kernel / initrd detection ------------------------------------------
-
-KERNEL_PATTERNS = [
-    "vmlinuz-*",
-    "vmlinuz",
-    "linux-*",
-    "linux",
-    "bzImage-*",
-    "bzImage",
-]
-
-INITRD_PATTERNS = [
-    "initramfs-{version}.img",
-    "initrd-{version}.img",
-    "initramfs-{version}",
-    "initrd-{version}",
-    "initrd.img-{version}",
-    "initrd-{version}.gz",
-]
-
-
-def find_kernel_initrd(root_dir):
-    """Locate the most recent kernel and matching initrd in root_dir/boot."""
-    boot_dir = os.path.join(root_dir, 'boot')
-    if not os.path.isdir(boot_dir):
-        return None, None
-
-    # collect all possible kernels
-    candidates = []
-    for pattern in KERNEL_PATTERNS:
-        candidates.extend(glob.glob(os.path.join(boot_dir, pattern)))
-    if not candidates:
-        return None, None
-
-    # pick the most recently modified
-    kernel = max(candidates, key=os.path.getmtime)
-    # extract version string
-    base = os.path.basename(kernel)
-    # common prefixes
-    for prefix in ('vmlinuz-', 'linux-', 'bzImage-'):
-        if base.startswith(prefix):
-            version = base[len(prefix):]
-            break
-    else:
-        version = base  # fallback
-
-    # try to find matching initrd
-    initrd = None
-    for pattern in INITRD_PATTERNS:
-        candidate = os.path.join(boot_dir, pattern.format(version=version))
-        if os.path.exists(candidate):
-            initrd = candidate
-            break
-
-    # fallback: any initr* containing version
-    if not initrd:
-        for name in os.listdir(boot_dir):
-            if name.startswith('initr') and version in name:
-                initrd = os.path.join(boot_dir, name)
-                break
-
-    linux_rel = os.path.relpath(kernel, root_dir) if kernel else None
-    initrd_rel = os.path.relpath(initrd, root_dir) if initrd else None
-    return linux_rel, initrd_rel
-
-
-# ---- CLI ----------------------------------------------------------------
 
 def _get_lpss_dir(args_lpss_dir=None):
     if args_lpss_dir:
@@ -143,7 +80,7 @@ def main():
     initrd_path = args.initrd
 
     if not linux_path or not initrd_path:
-        auto_linux, auto_initrd = find_kernel_initrd(root_dir)
+        auto_linux, auto_initrd = find_kernel_initrd_in_root(root_dir)
         if not linux_path:
             if auto_linux:
                 linux_path = auto_linux

@@ -9,9 +9,13 @@ defaults to /mnt/lpss.
 
 Every modifying operation prints the exact filesystem paths affected.
 """
-import argparse
 import os
 import sys
+
+# Allow running from copied tools directory (e.g., /mnt/lpss/bin)
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
+
+import argparse
 import subprocess
 
 from lib.config import load_config
