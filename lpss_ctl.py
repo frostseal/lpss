@@ -23,7 +23,7 @@ from lib.flags import (read_flags, create_flag, remove_flag, has_flag)
 from lib.grub import generate_grub_cfg
 from lib.utils import (get_grub_subdir, find_grub_tool,
                        parse_cmdline, menu_entry_exists,
-                       activate_role)
+                       make_entry_default)
 
 
 def _get_lpss_dir(args_lpss_dir=None):
@@ -73,7 +73,7 @@ def main():
     boot_parser.add_argument('entry', help='Entry ID to boot')
 
     subparsers.add_parser('confirm',
-                          help='Confirm a trial boot, making it permanent')
+                          help='Confirm a trial boot, making it the default')
 
     enable_parser = subparsers.add_parser('enable', help='Enable an entry')
     enable_parser.add_argument('entry', help='Entry ID')
@@ -81,9 +81,9 @@ def main():
     disable_parser = subparsers.add_parser('disable', help='Disable an entry')
     disable_parser.add_argument('entry', help='Entry ID')
 
-    activate_parser = subparsers.add_parser('activate',
-                                            help='Activate an entry')
-    activate_parser.add_argument('entry', help='Entry ID')
+    default_parser = subparsers.add_parser('default',
+                                           help='Set an entry as the default for its role')
+    default_parser.add_argument('entry', help='Entry ID')
 
     subparsers.add_parser('apply',
                           help='Regenerate grub.cfg from current configuration')
@@ -128,11 +128,11 @@ def main():
         for eid, entry in config.entries.items():
             f = flags.get(eid, set())
             enabled = 'enabled' in f
-            active = 'active' in f
+            default = 'default' in f
             print(f"\n{eid}")
             print(f"  role: {entry.role}")
             print(f"  enabled: {'yes' if enabled else 'no'}")
-            print(f"  active: {'yes' if active else 'no'}")
+            print(f"  default: {'yes' if default else 'no'}")
 
         next_entry = _read_grubenv_next_entry(grubenv_path)
         if next_entry:
@@ -197,17 +197,18 @@ def main():
             sys.exit(1)
 
         role = config.entries[entry_id].role
-        activate_role(flags_dir, config, role, entry_id,
-                      create=create_flag, remove=remove_flag, has=has_flag)
+        make_entry_default(flags_dir, config, role, entry_id,
+                           create=create_flag, remove=remove_flag,
+                           has=has_flag)
         enabled_path = os.path.join(flags_dir, entry_id, 'enabled')
-        active_path = os.path.join(flags_dir, entry_id, 'active')
+        default_path = os.path.join(flags_dir, entry_id, 'default')
         print(f"Ensured {enabled_path} exists")
-        print(f"Created {active_path}")
+        print(f"Created {default_path}")
         for eid, e in config.entries.items():
             if e.role == role and eid != entry_id:
-                if has_flag(flags_dir, eid, 'active'):
-                    print(f"Removed {os.path.join(flags_dir, eid, 'active')}")
-        print(f"Entry '{entry_id}' confirmed as active for role '{role}'.")
+                if has_flag(flags_dir, eid, 'default'):
+                    print(f"Removed {os.path.join(flags_dir, eid, 'default')}")
+        print(f"Entry '{entry_id}' confirmed as default for role '{role}'.")
 
     # ---- enable ---------------------------------------------------------
     elif args.command == 'enable':
@@ -226,8 +227,9 @@ def main():
         if entry_id not in config.entries:
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
-        if has_flag(flags_dir, entry_id, 'active'):
-            print(f"Error: entry '{entry_id}' is active. Deactivate it first.",
+        if has_flag(flags_dir, entry_id, 'default'):
+            print(f"Error: entry '{entry_id}' is the default. "
+                  "Change the default first.",
                   file=sys.stderr)
             sys.exit(1)
         flag_path = os.path.join(flags_dir, entry_id, 'enabled')
@@ -238,8 +240,8 @@ def main():
             print(f"{flag_path} already absent")
         print(f"Entry '{entry_id}' disabled.")
 
-    # ---- activate --------------------------------------------------------
-    elif args.command == 'activate':
+    # ---- default (set as default) ---------------------------------------
+    elif args.command == 'default':
         entry_id = args.entry
         if entry_id not in config.entries:
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
@@ -251,15 +253,16 @@ def main():
             sys.exit(1)
 
         role = config.entries[entry_id].role
-        activate_role(flags_dir, config, role, entry_id,
-                      create=create_flag, remove=remove_flag, has=has_flag)
-        active_path = os.path.join(flags_dir, entry_id, 'active')
-        print(f"Created {active_path}")
+        make_entry_default(flags_dir, config, role, entry_id,
+                           create=create_flag, remove=remove_flag,
+                           has=has_flag)
+        default_path = os.path.join(flags_dir, entry_id, 'default')
+        print(f"Created {default_path}")
         for eid, e in config.entries.items():
             if e.role == role and eid != entry_id:
-                if has_flag(flags_dir, eid, 'active'):
-                    print(f"Removed {os.path.join(flags_dir, eid, 'active')}")
-        print(f"Entry '{entry_id}' activated for role '{role}'.")
+                if has_flag(flags_dir, eid, 'default'):
+                    print(f"Removed {os.path.join(flags_dir, eid, 'default')}")
+        print(f"Entry '{entry_id}' is now the default for role '{role}'.")
 
     # ---- apply -----------------------------------------------------------
     elif args.command == 'apply':

@@ -272,7 +272,7 @@ print(i or '')
     # ---- activate slot-a ----------------------------------------------------
     step "Activating slot-a and regenerating grub.cfg"
     "$LPSS_CTL" --lpss-dir "$PWD/mnt/lpss" enable slot-a
-    "$LPSS_CTL" --lpss-dir "$PWD/mnt/lpss" activate slot-a
+    "$LPSS_CTL" --lpss-dir "$PWD/mnt/lpss" default slot-a
     "$LPSS_CTL" --lpss-dir "$PWD/mnt/lpss" apply
 
     # ---- save debugging artifacts -------------------------------------------

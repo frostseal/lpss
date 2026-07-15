@@ -194,15 +194,18 @@ def validate_locator(locator: str) -> None:
 
 # ---- Flag manipulation helpers ------------------------------------------
 
-def activate_role(flags_dir, config, role, entry_id, *, create, remove, has):
-    """Make *entry_id* the active entry for *role*."""
+def make_entry_default(flags_dir, config, role, entry_id, *, create, remove, has):
+    """Make *entry_id* the default entry for *role*.
+    Ensures the entry is enabled and removes the default flag from any
+    other entry sharing the same role.
+    """
     if not has(flags_dir, entry_id, 'enabled'):
         create(flags_dir, entry_id, 'enabled')
-    create(flags_dir, entry_id, 'active')
+    create(flags_dir, entry_id, 'default')
     for eid, entry in config.entries.items():
         if entry.role == role and eid != entry_id:
-            if has(flags_dir, eid, 'active'):
-                remove(flags_dir, eid, 'active')
+            if has(flags_dir, eid, 'default'):
+                remove(flags_dir, eid, 'default')
 
 
 # ---- Filesystem helpers -------------------------------------------------

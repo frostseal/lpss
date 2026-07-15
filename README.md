@@ -72,8 +72,8 @@ paths, and extra kernel options.
 ### Enabled
 The entry is available for manual or automatic boot.
 
-### Active
-The default entry for a role (only one per role).  `active` implies
+### Default
+The default (active) entry for a role (only one per role).  `default` implies
 `enabled`.
 
 ### Trial
@@ -275,16 +275,16 @@ Runtime state is kept as empty files under `flags/<entry>/`:
 flags/
  arch/
   ├── enabled
-  └── active
+  └── default
  opensuse/
   └── enabled
 ```
 
 Invariants (enforced by `lpss_ctl`):
 
-- an active entry must also be enabled,
-- only one entry per role may be active,
-- disabling an active entry is rejected.
+- an default entry must also be enabled,
+- only one entry per role may be default,
+- disabling an default entry is rejected.
 
 Trial state is stored **only** in GRUB’s `grubenv` (the `next_entry`
 variable).
@@ -295,11 +295,11 @@ variable).
 2. GRUB loads the main `grub.cfg` from the LPSS partition.
 3. The themed menu shows an `Automatic` entry and all registered
    Linux slots.
-4. `Automatic` boots the active+enabled entry (or the first enabled
-   if none is active).
+4. `Automatic` boots the default+enabled entry (or the first enabled
+   if none is default).
 5. Manual selection triggers a one‑shot trial boot.
 6. After a successful trial, `lpss_ctl confirm` promotes the entry
-   to active.
+   to default.
 
 ---
 

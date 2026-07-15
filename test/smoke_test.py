@@ -19,24 +19,35 @@ import sys
 
 PROJECT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 
+# Global counters for test results
+pass_count = 0
+fail_count = 0
+
 
 def check_file(path, description):
+    global pass_count, fail_count
     if os.path.exists(path):
         print(f"  [PASS] {description} ({path})")
+        pass_count += 1
     else:
         print(f"  [FAIL] {description} ({path}) missing")
+        fail_count += 1
 
 
 def check_file_contains(path, substring, description):
+    global pass_count, fail_count
     try:
         with open(path) as f:
             content = f.read()
         if substring in content:
             print(f"  [PASS] {description} ({path})")
+            pass_count += 1
         else:
             print(f"  [FAIL] {description}: '{substring}' not found in {path}")
+            fail_count += 1
     except FileNotFoundError:
         print(f"  [FAIL] {description}: file {path} not found")
+        fail_count += 1
 
 
 def check_flag_exists(flags_dir, entry, flag):
@@ -141,19 +152,19 @@ def main():
         check_file_contains(os.path.join(lpss_mnt, 'lpss.conf'),
                             '[entry.testlinux]', 'entry added')
         check_file_contains(os.path.join(grub_dir, 'grub.cfg'),
-                            'menuentry "testlinux"', 'grub.cfg updated')
+                            'entry_testlinux', 'grub.cfg updated')
 
-        print("\n=== 3. lpss_ctl enable + activate + apply ===")
+        print("\n=== 3. lpss_ctl enable + default + apply ===")
         run([lpss_ctl, '--lpss-dir', lpss_mnt, 'enable', 'testlinux'],
             env=env, check=True)
-        run([lpss_ctl, '--lpss-dir', lpss_mnt, 'activate', 'testlinux'],
+        run([lpss_ctl, '--lpss-dir', lpss_mnt, 'default', 'testlinux'],
             env=env, check=True)
         run([lpss_ctl, '--lpss-dir', lpss_mnt, 'apply'],
             env=env, check=True)
 
         flags_dir = os.path.join(lpss_mnt, 'flags')
         check_flag_exists(flags_dir, 'testlinux', 'enabled')
-        check_flag_exists(flags_dir, 'testlinux', 'active')
+        check_flag_exists(flags_dir, 'testlinux', 'default')
 
         editenv = find_grub_tool('editenv')
         if editenv:
@@ -171,7 +182,7 @@ def main():
             env['LPSS_CMDLINE_FILE'] = fake_cmdline
             run([lpss_ctl, '--lpss-dir', lpss_mnt, 'confirm'],
                 env=env, check=True)
-            check_flag_exists(flags_dir, 'testlinux', 'active')
+            check_flag_exists(flags_dir, 'testlinux', 'default')
             print("  [INFO] confirm with trial succeeded.")
 
             with open(fake_cmdline, 'w') as f:
@@ -180,8 +191,12 @@ def main():
                          env=env, capture_output=True, text=True)
             if result.returncode != 0 and 'not a trial' in result.stderr:
                 print("  [PASS] confirm missing trial flag correctly rejected")
+                global pass_count
+                pass_count += 1
             else:
                 print("  [FAIL] confirm should have rejected missing trial flag")
+                global fail_count
+                fail_count += 1
         else:
             print("\n=== Trial boot tests skipped (no grub-editenv) ===")
 
@@ -194,7 +209,16 @@ def main():
             os.remove(esp_img)
 
     print("\n=== Smoke test summary ===")
-    print("Check the output above for PASS/FAIL lines.")
+    total = pass_count + fail_count
+    print(f"Total checks: {total}")
+    print(f"  PASS: {pass_count}")
+    print(f"  FAIL: {fail_count}")
+    if fail_count > 0:
+        print("FAILED (errors encountered)")
+        sys.exit(1)
+    else:
+        print("TOTAL PASS")
+        sys.exit(0)
 
 
 if __name__ == '__main__':

@@ -44,9 +44,9 @@ menuentry "Default boot" --id=default --class lpss-default {
     set chosen=""
 """
 
-CHECK_ACTIVE_ENABLED = """\
+CHECK_DEFAULT_ENABLED = """\
     if [ -z "${{chosen}}" ]; then
-        if [ -f ($root)/flags/{entry_id}/active ]; then
+        if [ -f ($root)/flags/{entry_id}/default ]; then
             if [ -f ($root)/flags/{entry_id}/enabled ]; then
                 set chosen={entry_id}
             fi
@@ -161,7 +161,7 @@ def generate_grub_cfg(config: LPSSConfig,
     # Default boot
     dflt = DEFAULT_ENTRY
     for e in entries:
-        dflt += CHECK_ACTIVE_ENABLED.format(entry_id=e.id)
+        dflt += CHECK_DEFAULT_ENABLED.format(entry_id=e.id)
     for e in entries:
         dflt += CHECK_ENABLED.format(entry_id=e.id)
     for e in entries:
