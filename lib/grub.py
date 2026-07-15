@@ -3,15 +3,17 @@
 """
 GRUB configuration generator for LPSS.
 
-Produces a themed grub.cfg that uses only widely supported GRUB commands
-(if, [ -f ]). Trial boot logic (load_env/save_env) is disabled by default
-for maximum compatibility; enable with include_trial=True when the target
-GRUB build supports envblk.
+Generates a themed grub.cfg with the following menu structure:
 
-The generated config always begins by setting $root to the LPSS partition
-via search --fs-uuid, so that flag file checks work reliably.
-
-Automatically adds root= kernel parameter derived from the locator.
+    === LPSS Boot Manager ===
+    Default boot
+    ──────────────────────────
+    Boot once: <entry-id>    (no trial flag)
+    ──────────────────────────
+    Try to switch to: <entry-id>   (trial, adds lpss_trial=1)
+    ──────────────────────────
+    Reboot
+    UEFI Firmware Setup
 """
 
 from lib.config import LPSSConfig
@@ -23,22 +25,22 @@ from lib.utils import make_search_command
 HEADER = """\
 # LPSS Boot Manager – generated grub.cfg
 # Green Forest theme
-set menu_color_normal=light-green/black
-set menu_color_highlight=green/black
+set menu_color_normal=green/black
+set menu_color_highlight=black/green
 set timeout=10
 
 search --fs-uuid {lpss_uuid} --set=root
-set default="auto"
+set default="default"
 """
 
 TITLE_ENTRY = """\
-menuentry "=== LPSS Boot Manager ===" --class lpss-title --unrestricted {
+menuentry "=-_ Linux Partition Slot System _-=" --class lpss-title --unrestricted {
     true
 }
 """
 
-AUTO_HEADER = """\
-menuentry "Automatic" --id=auto --class lpss-auto {
+DEFAULT_ENTRY = """\
+menuentry "Default boot" --id=default --class lpss-default {
     set chosen=""
 """
 
@@ -69,25 +71,50 @@ BOOT_BLOCK = """\
     fi
 """
 
-AUTO_FOOTER = """\
+DEFAULT_FOOTER = """\
     if [ -z "${chosen}" ]; then
         echo "No bootable LPSS entries configured."
     fi
 }
 """
 
-SLOT_ENTRY = """\
-menuentry "{id}" --id=entry_{id} --class lpss-slot {{
+BOOT_ONCE_ENTRY = """\
+menuentry "Boot once: {id}" --id=once_{id} --class lpss-once {{
     {search}
     linux {linux} {params}
     initrd {initrd}
 }}
 """
 
+TRIAL_ENTRY = """\
+menuentry "Try to switch to: {id}" --id=entry_{id} --class lpss-trial {{
+    {search}
+    linux {linux} {params}
+    initrd {initrd}
+}}
+"""
+
+SEPARATOR = """\
+menuentry "──────────────────────────" --class lpss-sep --unrestricted {
+    true
+}
+"""
+
+REBOOT_ENTRY = """\
+menuentry "Reboot" --class lpss-reboot {
+    reboot
+}
+"""
+
+UEFI_ENTRY = """\
+menuentry "UEFI Firmware Setup" --class lpss-uefi {
+    fwsetup
+}
+"""
+
 
 # ---- helpers ------------------------------------------------------------
 
-# Mapping from locator type to root= kernel parameter format
 _ROOT_PARAM_MAP = {
     "label":     "root=LABEL={value}",
     "partlabel": "root=PARTLABEL={value}",
@@ -97,7 +124,6 @@ _ROOT_PARAM_MAP = {
 
 
 def _make_root_param(locator: str) -> str:
-    """Derive a root= kernel parameter from a locator string."""
     try:
         kind, value = locator.split(":", 1)
     except ValueError:
@@ -109,7 +135,6 @@ def _make_root_param(locator: str) -> str:
 
 
 def _kernel_params(entry, lpss_uuid: str, trial: bool = False) -> str:
-    """Build the kernel command-line for a given entry."""
     root_param = _make_root_param(entry.locator)
     params = [
         root_param,
@@ -126,53 +151,53 @@ def _kernel_params(entry, lpss_uuid: str, trial: bool = False) -> str:
 
 def generate_grub_cfg(config: LPSSConfig,
                       output_path: str,
-                      include_trial: bool = False) -> None:
-    """
-    Generate LPSS grub.cfg from config.
-
-    Parameters:
-        config: parsed LPSSConfig object
-        output_path: path to write grub.cfg on the LPSS partition
-        include_trial: if True, add load_env/save_env and next_entry logic
-                       (requires GRUB with envblk module)
-    """
+                      include_trial: bool = True) -> None:
     entries = list(config.entries.values())
     lpss_uuid = config.uuid
 
     cfg = HEADER.format(lpss_uuid=lpss_uuid)
-
-    if include_trial:
-        cfg += ("\nload_env\n"
-                "if [ -n \"${next_entry}\" ]; then\n"
-                "    set default=\"${next_entry}\"\n"
-                "    set next_entry=\n"
-                "    save_env next_entry\n"
-                "fi\n")
-
     cfg += TITLE_ENTRY
 
-    # Automatic entry
-    auto = AUTO_HEADER
+    # Default boot
+    dflt = DEFAULT_ENTRY
     for e in entries:
-        auto += CHECK_ACTIVE_ENABLED.format(entry_id=e.id)
+        dflt += CHECK_ACTIVE_ENABLED.format(entry_id=e.id)
     for e in entries:
-        auto += CHECK_ENABLED.format(entry_id=e.id)
+        dflt += CHECK_ENABLED.format(entry_id=e.id)
     for e in entries:
         search_cmd = make_search_command(e.locator)
         params = _kernel_params(e, lpss_uuid, trial=False)
-        auto += BOOT_BLOCK.format(entry_id=e.id, search=search_cmd,
+        dflt += BOOT_BLOCK.format(entry_id=e.id, search=search_cmd,
                                   linux=e.linux, params=params,
                                   initrd=e.initrd)
-    auto += AUTO_FOOTER
-    cfg += auto
+    dflt += DEFAULT_FOOTER
+    cfg += dflt
 
-    # Individual slot entries
+    if entries:
+        cfg += SEPARATOR
+
+    # Boot once (no trial)
     for e in entries:
         search_cmd = make_search_command(e.locator)
         params = _kernel_params(e, lpss_uuid, trial=False)
-        cfg += SLOT_ENTRY.format(id=e.id, search=search_cmd,
-                                 linux=e.linux, params=params,
-                                 initrd=e.initrd)
+        cfg += BOOT_ONCE_ENTRY.format(id=e.id, search=search_cmd,
+                                      linux=e.linux, params=params,
+                                      initrd=e.initrd)
+
+    if entries:
+        cfg += SEPARATOR
+
+    # Try to switch to (trial)
+    for e in entries:
+        search_cmd = make_search_command(e.locator)
+        params = _kernel_params(e, lpss_uuid, trial=True)
+        cfg += TRIAL_ENTRY.format(id=e.id, search=search_cmd,
+                                  linux=e.linux, params=params,
+                                  initrd=e.initrd)
+
+    cfg += SEPARATOR
+    cfg += REBOOT_ENTRY
+    cfg += UEFI_ENTRY
 
     with open(output_path, 'w') as f:
         f.write(cfg)
