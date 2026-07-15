@@ -73,7 +73,7 @@ paths, and extra kernel options.
 The entry is available for manual or automatic boot.
 
 ### Default
-The default (active) entry for a role (only one per role).  `default` implies
+The default entry for a role (only one per role).  `default` implies
 `enabled`.
 
 ### Trial
@@ -164,10 +164,10 @@ to see the detected values.  Supported locator types include
 `partlabel`, `label`, `fsuuid`, and `partuuid` (the backend is
 extensible).
 
-### 5. Enable, activate, and apply
+### 5. Enable, set default, and apply
 ```bash
 lpss_ctl --lpss-dir /mnt/lpss enable arch
-lpss_ctl --lpss-dir /mnt/lpss activate arch
+lpss_ctl --lpss-dir /mnt/lpss default arch
 lpss_ctl --lpss-dir /mnt/lpss apply        # regenerate grub.cfg
 ```
 
@@ -186,7 +186,7 @@ command line.  If everything works, make it the permanent default:
 lpss_ctl --lpss-dir /mnt/lpss confirm
 ```
 
-`confirm` activates the current trial entry for its role.
+`confirm` sets the current trial entry as the default for its role.
 
 ---
 
@@ -237,7 +237,8 @@ All tools accept `--lpss-dir` (preferred) or the environment variable
 |----------------|---------|
 | `lpss_install` | Install LPSS infrastructure onto an already‑prepared partition. |
 | `lpss_import`  | Register an existing Linux installation as an LPSS entry. |
-| `lpss_ctl`     | Manage entries —  `enable`, `disable`, `activate`, ... |
+| `lpss_ctl`     | Manage entries —  `enable`, `disable`, `default`, ... |
+| `lpss_app_install` | (optional) Create symlinks for LPSS tools without needing make. |
 | `lpss_check`   | (planned) Diagnose configuration consistency. |
 
 `lpss_ctl current` reads the running entry from `/proc/cmdline`.
@@ -282,9 +283,9 @@ flags/
 
 Invariants (enforced by `lpss_ctl`):
 
-- an default entry must also be enabled,
+- a default entry must also be enabled,
 - only one entry per role may be default,
-- disabling an default entry is rejected.
+- disabling a default entry is rejected.
 
 Trial state is stored **only** in GRUB’s `grubenv` (the `next_entry`
 variable).
