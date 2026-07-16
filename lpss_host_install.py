@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-# @file lpss_app_install.py
+# @file lpss_host_install.py
 """
-Install LPSS tools by creating symbolic links.
+Integrate the LPSS application bundle with the current host Linux.
 
-Creates symlinks in <prefix> for each LPSS script, stripping the .py
-extension.
+Creates symbolic links in <prefix> for each LPSS script,
+stripping the .py extension.  This makes LPSS commands available
+via the system PATH without copying files.
 
 Usage:
-  python3 lpss_app_install.py --prefix /usr/local/bin
-  python3 lpss_app_install.py --uninstall --prefix /usr/local/bin
+  python3 lpss_host_install.py --prefix /usr/local/bin
+  python3 lpss_host_install.py --uninstall --prefix /usr/local/bin
 """
 
 import argparse
@@ -28,7 +29,7 @@ def main():
     parser.add_argument('--uninstall', action='store_true',
                         help='Remove symlinks instead of creating them')
     parser.add_argument('--app-dir', default=None,
-                        help='Directory containing the LPSS scripts '
+                        help='Directory containing the LPSS application bundle '
                              '(default: directory of this script)')
     args = parser.parse_args()
 

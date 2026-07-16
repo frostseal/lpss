@@ -82,7 +82,7 @@ state.  The next boot returns to the default.  Use `lpss_ctl boot`.
 
 ### Trial boot
 Try to switch current default entry to another entry
-A transactional try-boot that requires confirmation after boot. The kernel command
+via try-boot that requires confirmation after boot. The kernel command
 line receives `lpss_trial=1`.  After a successful test,
 `lpss_ctl confirm` makes the trial entry the new default.  Use
 `lpss_ctl trial`.
@@ -135,7 +135,7 @@ mount /dev/sda2 /mnt/lpss      # LPSS partition
 mount /dev/sda1 /boot/efi      # EFI System Partition
 ```
 
-### 3. Install LPSS infrastructure
+### 3. Install LPSS runtime and application bundle
 ```bash
 lpss_install --lpss-dir /mnt/lpss --esp-dir /boot/efi
 ```
@@ -150,10 +150,25 @@ lpss_install --lpss-dir /mnt/lpss --esp-dir /boot/efi \
     --grub-install-extra "--removable --no-nvram"
 ```
 
-LPSS will create the `lpss.conf` configuration file and the `flags/`
-directory on the LPSS partition.
+This command performs two independent actions:
 
-### 4. Import a Linux system
+- installs the LPSS runtime (`lpss.conf`, `flags/`, `grub/`, `grub.cfg`)
+- deploys the LPSS application bundle into `<lpss>/app`
+
+The application bundle is self‑contained and can be used directly from
+any booted slot via `python3 /mnt/lpss/app/lpss_ctl.py ...`.
+
+### 4. (Optional) Host integration
+To make LPSS commands available in the current host without typing the
+full Python path, create symbolic links:
+
+```bash
+lpss_host_install --prefix /usr/local/bin
+```
+
+This is optional — the application bundle works without it.
+
+### 5. Import a Linux system
 Mount the root filesystem of your existing installation:
 ```bash
 mount /dev/sda3 /mnt/rootfs
@@ -170,7 +185,7 @@ to see the detected values.  Supported locator types include
 `partlabel`, `label`, `fsuuid`, and `partuuid` (the backend is
 extensible).
 
-### 5. Enable, set default, and apply
+### 6. Enable, set default, and apply
 ```bash
 lpss_ctl --lpss-dir /mnt/lpss enable arch
 lpss_ctl --lpss-dir /mnt/lpss default arch
@@ -179,7 +194,7 @@ lpss_ctl --lpss-dir /mnt/lpss apply        # regenerate grub.cfg
 
 Now `arch` will boot automatically.
 
-### 6. Test another entry
+### 7. Test another entry
 
 **One-shot boot** (no persistent changes):
 ```bash
@@ -249,10 +264,10 @@ All tools accept `--lpss-dir` (preferred) or the environment variable
 
 | Tool              | Purpose |
 |-------------------|---------|
-| `lpss_install`    | Install LPSS infrastructure onto an already‑prepared partition. |
+| `lpss_install`    | Install the LPSS runtime and/or deploy the application bundle. |
 | `lpss_import`     | Register an existing Linux installation as an LPSS entry. |
 | `lpss_ctl`        | Manage entries — `enable`, `disable`, `default`, `boot`, `trial`, `confirm`, `apply`, `status`, `list`, `current`. |
-| `lpss_app_install`| (optional) Create symlinks for LPSS tools without needing make. |
+| `lpss_host_install`| (optional) Integrate LPSS commands with the current host Linux via symlinks. |
 | `lpss_check`      | (planned) Diagnose configuration consistency. |
 
 `lpss_ctl current` reads the running entry from `/proc/cmdline`.
