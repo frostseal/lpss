@@ -55,6 +55,15 @@ def _read_grubenv_next_entry(grubenv_path):
     return None
 
 
+def _require_root_type(entry_type, command_name):
+    """Ensure entry type supports the given command."""
+    if entry_type != 'root':
+        print(f"Error: '{command_name}' is only supported for "
+              f"entries of type 'root', not '{entry_type}'.",
+              file=sys.stderr)
+        sys.exit(1)
+
+
 def main():
     parser = argparse.ArgumentParser(
         description=__doc__,
@@ -72,13 +81,6 @@ def main():
         'current',
         help='Show current booted entry'
     )
-
-    # One-shot boot (no trial)
-    boot_parser = subparsers.add_parser(
-        'boot',
-        help='One-shot boot – no persistent changes'
-    )
-    boot_parser.add_argument('entry', help='Entry ID to boot once')
 
     # Trial boot (requires confirm)
     trial_parser = subparsers.add_parser(
@@ -105,7 +107,7 @@ def main():
 
     default_parser = subparsers.add_parser(
         'default',
-        help='Set an entry as the default for its role'
+        help='Set an entry as the default for its type'
     )
     default_parser.add_argument('entry', help='Entry ID')
 
@@ -156,7 +158,7 @@ def main():
             enabled = 'enabled' in f
             default = 'default' in f
             print(f"\n{eid}")
-            print(f"  role: {entry.role}")
+            print(f"  type: {entry.type}")
             print(f"  enabled: {'yes' if enabled else 'no'}")
             print(f"  default: {'yes' if default else 'no'}")
 
@@ -166,7 +168,7 @@ def main():
         current = cmd['lpss_entry'] or 'none'
         print(f"  current: {current}")
 
-        # Find default entry for 'root' role (simplified: show first default)
+        # Find default entry (only for root type, show first found)
         default_entry = None
         for eid, f in flags.items():
             if 'default' in f:
@@ -175,14 +177,9 @@ def main():
         print(f"  default: {default_entry or 'none'}")
 
         next_entry = _read_grubenv_next_entry(grubenv_path)
-        one_shot = None
         trial = None
-        if next_entry:
-            if next_entry.startswith('once_'):
-                one_shot = next_entry[5:]   # remove 'once_'
-            elif next_entry.startswith('entry_'):
-                trial = next_entry[6:]      # remove 'entry_'
-        print(f"  one-shot: {one_shot or 'none'}")
+        if next_entry and next_entry.startswith('entry_'):
+            trial = next_entry[6:]
         trial_status = f"{trial} (pending confirmation)" if trial else 'none'
         print(f"  trial: {trial_status}")
 
@@ -191,47 +188,15 @@ def main():
         for eid in config.entries:
             print(eid)
 
-    # ---- boot (one-shot) -------------------------------------------------
-    elif args.command == 'boot':
-        entry_id = args.entry
-        if entry_id not in config.entries:
-            print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
-            sys.exit(1)
-
-        if not menu_entry_exists(grub_cfg_path, entry_id):
-            print(f"Error: grub.cfg does not contain menu entry for "
-                  f"'{entry_id}'. Run 'apply' to regenerate.",
-                  file=sys.stderr)
-            sys.exit(1)
-
-        if not has_flag(flags_dir, entry_id, 'enabled'):
-            print(f"Warning: entry '{entry_id}' is not enabled; "
-                  "one-shot boot may not appear in default menu.",
-                  file=sys.stderr)
-
-        next_entry = f'once_{entry_id}'
-        editenv = find_grub_tool('editenv')
-        if not editenv:
-            print("Error: grub-editenv not found", file=sys.stderr)
-            sys.exit(1)
-
-        cmd = [editenv, grubenv_path, 'set', f'next_entry={next_entry}']
-        try:
-            subprocess.run(cmd, check=True)
-            print(f"Updated {grubenv_path}: set next_entry={next_entry}")
-            print(f"One-shot boot configured.")
-            print(f"Next boot: {entry_id}")
-            print(f"No persistent changes will be made.")
-        except subprocess.CalledProcessError as e:
-            print(f"{editenv} failed: {e}", file=sys.stderr)
-            sys.exit(1)
-
     # ---- trial (transactional) -------------------------------------------
     elif args.command == 'trial':
         entry_id = args.entry
         if entry_id not in config.entries:
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
+
+        entry = config.entries[entry_id]
+        _require_root_type(entry.type, 'trial')
 
         if not menu_entry_exists(grub_cfg_path, entry_id):
             print(f"Error: grub.cfg does not contain menu entry for "
@@ -254,9 +219,9 @@ def main():
         try:
             subprocess.run(cmd, check=True)
             print(f"Updated {grubenv_path}: set next_entry={next_entry}")
-            print(f"Trial boot configured.")
+            print("Trial boot configured.")
             print(f"Next boot: {entry_id}")
-            print(f"Confirmation required.")
+            print("Confirmation required.")
         except subprocess.CalledProcessError as e:
             print(f"{editenv} failed: {e}", file=sys.stderr)
             sys.exit(1)
@@ -277,8 +242,11 @@ def main():
                   file=sys.stderr)
             sys.exit(1)
 
-        role = config.entries[entry_id].role
-        make_entry_default(flags_dir, config, role, entry_id,
+        entry = config.entries[entry_id]
+        _require_root_type(entry.type, 'confirm')
+
+        entry_type = entry.type
+        make_entry_default(flags_dir, config, entry_type, entry_id,
                            create=create_flag, remove=remove_flag,
                            has=has_flag)
         enabled_path = os.path.join(flags_dir, entry_id, 'enabled')
@@ -286,10 +254,11 @@ def main():
         print(f"Ensured {enabled_path} exists")
         print(f"Created {default_path}")
         for eid, e in config.entries.items():
-            if e.role == role and eid != entry_id:
+            if e.type == entry_type and eid != entry_id:
                 if has_flag(flags_dir, eid, 'default'):
                     print(f"Removed {os.path.join(flags_dir, eid, 'default')}")
-        print(f"Entry '{entry_id}' confirmed as default for role '{role}'.")
+        print(f"Entry '{entry_id}' confirmed as default "
+              f"for type '{entry_type}'.")
 
     # ---- enable ---------------------------------------------------------
     elif args.command == 'enable':
@@ -297,6 +266,10 @@ def main():
         if entry_id not in config.entries:
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
+
+        entry = config.entries[entry_id]
+        _require_root_type(entry.type, 'enable')
+
         flag_path = os.path.join(flags_dir, entry_id, 'enabled')
         create_flag(flags_dir, entry_id, 'enabled')
         print(f"Created {flag_path}")
@@ -308,6 +281,10 @@ def main():
         if entry_id not in config.entries:
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
+
+        entry = config.entries[entry_id]
+        _require_root_type(entry.type, 'disable')
+
         if has_flag(flags_dir, entry_id, 'default'):
             print(f"Error: entry '{entry_id}' is the default. "
                   "Change the default first.",
@@ -327,23 +304,28 @@ def main():
         if entry_id not in config.entries:
             print(f"Error: entry '{entry_id}' not found", file=sys.stderr)
             sys.exit(1)
+
+        entry = config.entries[entry_id]
+        _require_root_type(entry.type, 'default')
+
         if not has_flag(flags_dir, entry_id, 'enabled'):
             print(f"Error: entry '{entry_id}' is not enabled. "
                   "Enable it first or use 'confirm'.",
                   file=sys.stderr)
             sys.exit(1)
 
-        role = config.entries[entry_id].role
-        make_entry_default(flags_dir, config, role, entry_id,
+        entry_type = entry.type
+        make_entry_default(flags_dir, config, entry_type, entry_id,
                            create=create_flag, remove=remove_flag,
                            has=has_flag)
         default_path = os.path.join(flags_dir, entry_id, 'default')
         print(f"Created {default_path}")
         for eid, e in config.entries.items():
-            if e.role == role and eid != entry_id:
+            if e.type == entry_type and eid != entry_id:
                 if has_flag(flags_dir, eid, 'default'):
                     print(f"Removed {os.path.join(flags_dir, eid, 'default')}")
-        print(f"Entry '{entry_id}' is now the default for role '{role}'.")
+        print(f"Entry '{entry_id}' is now the default "
+              f"for type '{entry_type}'.")
 
     # ---- apply -----------------------------------------------------------
     elif args.command == 'apply':

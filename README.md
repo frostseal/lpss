@@ -67,18 +67,15 @@ A managed Linux system provides only:
 ### Entry
 A single bootable Linux system described by a human-readable ID
 (`arch`, `opensuse`, …), a root filesystem locator, kernel/initrd
-paths, and extra kernel options.
+paths, and extra kernel options. Each entry has a `type` that defines
+how LPSS manages it (currently `root`).
 
 ### Enabled
 The entry is available for manual or automatic boot.
 
 ### Default
-The default entry for a role (only one per role).  `default` implies
+The default entry for its type (only one per type).  `default` implies
 `enabled`.
-
-### One-shot boot
-Boot a specific entry exactly once without changing any persistent
-state.  The next boot returns to the default.  Use `lpss_ctl boot`.
 
 ### Trial boot
 Try to switch current default entry to another entry
@@ -194,16 +191,7 @@ lpss_ctl --lpss-dir /mnt/lpss apply        # regenerate grub.cfg
 
 Now `arch` will boot automatically.
 
-### 7. Test another entry
-
-**One-shot boot** (no persistent changes):
-```bash
-lpss_ctl --lpss-dir /mnt/lpss boot opensuse
-reboot
-```
-The system boots `opensuse` once, then reverts to the default.
-
-**Trial boot** (requires confirmation):
+### 7. Trial boot another entry
 ```bash
 lpss_ctl --lpss-dir /mnt/lpss trial opensuse
 reboot
@@ -215,7 +203,7 @@ make it the permanent default:
 lpss_ctl --lpss-dir /mnt/lpss confirm
 ```
 
-`confirm` sets the current trial entry as the default for its role.
+`confirm` sets the current trial entry as the default for its type.
 
 ---
 
@@ -230,17 +218,15 @@ information; runtime state lives in `flags/` and `grubenv`.
 id=aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee
 version=1
 
-[entry.arch]
-id=arch
-role=root
+[arch]
+type=root
 locator=label:root.a
 linux=/boot/vmlinuz-linux
 initrd=/boot/initramfs-linux.img
 options=quiet splash
 
-[entry.opensuse]
-id=opensuse
-role=root
+[opensuse]
+type=root
 locator=label:root.b
 linux=/boot/vmlinuz
 initrd=/boot/initrd
@@ -266,7 +252,7 @@ All tools accept `--lpss-dir` (preferred) or the environment variable
 |-------------------|---------|
 | `lpss_install`    | Install the LPSS runtime and/or deploy the application bundle. |
 | `lpss_import`     | Register an existing Linux installation as an LPSS entry. |
-| `lpss_ctl`        | Manage entries — `enable`, `disable`, `default`, `boot`, `trial`, `confirm`, `apply`, `status`, `list`, `current`. |
+| `lpss_ctl`        | Manage entries — `enable`, `disable`, `default`, `trial`, `confirm`, `apply`, `status`, `list`, `current`. |
 | `lpss_host_install`| (optional) Integrate LPSS commands with the current host Linux via symlinks. |
 | `lpss_check`      | (planned) Diagnose configuration consistency. |
 
@@ -313,12 +299,11 @@ flags/
 Invariants (enforced by `lpss_ctl`):
 
 - a default entry must also be enabled,
-- only one entry per role may be default,
+- only one entry per type may be default,
 - disabling a default entry is rejected.
 
-One‑shot and trial boot targets are stored exclusively in GRUB’s
-`grubenv` as `next_entry=once_<id>` and `next_entry=entry_<id>`
-respectively.
+Trial boot targets are stored in GRUB’s `grubenv` as
+`next_entry=entry_<id>`.
 
 ### Boot flow
 1. EFI starts GRUB (installed by the distribution’s `grub-install`
@@ -328,8 +313,7 @@ respectively.
    Linux slots.
 4. `Default boot` selects the default+enabled entry (or the first
    enabled if no default is set).
-5. Manual selection allows either a one‑shot boot (`Boot once: …`)
-   or a trial boot (`Try to switch to: …`).
+5. Manual selection triggers a trial boot (`Try to switch to: …`).
 6. After a successful trial, `lpss_ctl confirm` promotes the entry
    to default.
 
@@ -342,12 +326,12 @@ systems with an ext4 LPSS partition.  What is implemented:
 
 - `lpss_install`, `lpss_import`, `lpss_ctl` with all listed commands,
 - `partlabel`, `label`, `fsuuid` locators,
-- `root` role only,
+- `root` type only,
 - `smoke_test.py` for offline validation.
 
 Planned:
 
-- additional roles (`home`, `data`, …),
+- additional entry types (`chain`, `home`, `data`, …),
 - `lpss_check` diagnostic tool,
 - improved importers (fsarchiver, raw images, …).
 

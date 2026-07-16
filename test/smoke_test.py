@@ -157,7 +157,9 @@ def main():
             env=env, check=True)
 
         check_file_contains(os.path.join(lpss_mnt, 'lpss.conf'),
-                            '[entry.testlinux]', 'entry added')
+                            '[testlinux]', 'entry testlinux added')
+        check_file_contains(os.path.join(lpss_mnt, 'lpss.conf'),
+                            'type=root', 'entry type is root')
         check_file_contains(os.path.join(grub_dir, 'grub.cfg'),
                             'entry_testlinux', 'grub.cfg updated')
 
@@ -188,13 +190,15 @@ def main():
             env=env, check=True)
 
         check_file_contains(os.path.join(lpss_mnt, 'lpss.conf'),
-                            '[entry.testnointrd]', 'entry testnointrd added')
+                            '[testnointrd]', 'entry testnointrd added')
+        check_file_contains(os.path.join(lpss_mnt, 'lpss.conf'),
+                            'type=root', 'entry type is root (nointrd)')
         # Verify no initrd= in the testnointrd section specifically
         with open(os.path.join(lpss_mnt, 'lpss.conf')) as f:
             full_conf = f.read()
-        start = full_conf.find('[entry.testnointrd]')
+        start = full_conf.find('[testnointrd]')
         if start == -1:
-            print("  [FAIL] section [entry.testnointrd] not found")
+            print("  [FAIL] section [testnointrd] not found")
             fail_count += 1
         else:
             end = full_conf.find('[', start + 1)
@@ -215,7 +219,7 @@ def main():
         # ---- Trial boot and confirm --------------------------------------
         editenv = find_grub_tool('editenv')
         if editenv:
-            print("\n=== 4. lpss_ctl trial (trial boot) ===")
+            print("\n=== 4. lpss_ctl trial ===")
             run([lpss_ctl, '--lpss-dir', lpss_mnt, 'trial', 'testlinux'],
                 env=env, check=True)
             check_file_contains(os.path.join(grub_dir, 'grubenv'),

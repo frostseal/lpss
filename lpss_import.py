@@ -17,7 +17,6 @@ import sys
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
 
 import argparse
-import glob
 
 from lib.config import load_config, LPSSConfigError
 from lib.grub import generate_grub_cfg
@@ -50,8 +49,8 @@ def main():
                         help='Path to initrd relative to root (auto-detected if omitted)')
     parser.add_argument('--options', default='ro quiet',
                         help='Kernel command line options (default: "ro quiet")')
-    parser.add_argument('--role', default='root',
-                        help='Entry role (default: root)')
+    parser.add_argument('--type', default='root',
+                        help='Entry type (default: root)')
     parser.add_argument('--update', '-u', action='store_true',
                         help='Update an existing entry instead of failing')
     args = parser.parse_args()
@@ -123,7 +122,7 @@ def main():
         if entry_exists and args.update:
             config.update_entry(
                 entry_id=args.id,
-                role=args.role,
+                entry_type=args.type,
                 locator=args.locator,
                 linux=f'/{linux_path.lstrip("/")}',
                 initrd=initrd_normalized,
@@ -133,7 +132,7 @@ def main():
         else:
             config.add_entry(
                 entry_id=args.id,
-                role=args.role,
+                entry_type=args.type,
                 locator=args.locator,
                 linux=f'/{linux_path.lstrip("/")}',
                 initrd=initrd_normalized,

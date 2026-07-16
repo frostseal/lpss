@@ -3,7 +3,7 @@
 """
 GRUB configuration generator for LPSS.
 
-Generates a themed grub.cfg with the following menu structure:
+Generates a themed grub.cfg.  Menu structure:
 
     === LPSS Boot Manager ===
     Default boot
@@ -16,6 +16,7 @@ Generates a themed grub.cfg with the following menu structure:
     UEFI Firmware Setup
 """
 
+import sys
 from lib.config import LPSSConfig
 from lib.utils import make_search_command
 
@@ -134,13 +135,14 @@ def _make_root_param(locator: str) -> str:
     return template.format(value=value)
 
 
-def _kernel_params(entry, lpss_uuid: str, trial: bool = False) -> str:
+def _kernel_params(entry, entry_id: str, lpss_uuid: str,
+                   trial: bool = False) -> str:
     root_param = _make_root_param(entry.locator)
     params = [
         root_param,
         entry.options,
         f"lpss_uuid={lpss_uuid}",
-        f"lpss_entry={entry.id}",
+        f"lpss_entry={entry_id}",
     ]
     if trial:
         params.append("lpss_trial=1")
@@ -159,48 +161,66 @@ def _initrd_line(entry) -> str:
 def generate_grub_cfg(config: LPSSConfig,
                       output_path: str,
                       include_trial: bool = True) -> None:
-    entries = list(config.entries.values())
     lpss_uuid = config.uuid
 
+    # Separate entries by type
+    root_entries = []
+    other_entries = []
+    for eid, entry in config.entries.items():
+        if entry.type == 'root':
+            root_entries.append((eid, entry))
+        else:
+            other_entries.append((eid, entry))
+
+    # Warn about unsupported entry types
+    for eid, entry in other_entries:
+        print(f"Warning: entry '{eid}' has unsupported type "
+              f"'{entry.type}', it will not appear in the GRUB menu.",
+              file=sys.stderr)
+
+    # ---- Build configuration --------------------------------------------
     cfg = HEADER.format(lpss_uuid=lpss_uuid)
     cfg += TITLE_ENTRY
 
-    # Default boot
-    dflt = DEFAULT_ENTRY
-    for e in entries:
-        dflt += CHECK_DEFAULT_ENABLED.format(entry_id=e.id)
-    for e in entries:
-        dflt += CHECK_ENABLED.format(entry_id=e.id)
-    for e in entries:
-        search_cmd = make_search_command(e.locator)
-        params = _kernel_params(e, lpss_uuid, trial=False)
-        dflt += BOOT_BLOCK.format(entry_id=e.id, search=search_cmd,
-                                  linux=e.linux, params=params,
-                                  initrd_line=_initrd_line(e))
-    dflt += DEFAULT_FOOTER
-    cfg += dflt
+    # Default boot (only root entries)
+    if root_entries:
+        dflt = DEFAULT_ENTRY
+        for eid, entry in root_entries:
+            dflt += CHECK_DEFAULT_ENABLED.format(entry_id=eid)
+        for eid, entry in root_entries:
+            dflt += CHECK_ENABLED.format(entry_id=eid)
+        for eid, entry in root_entries:
+            search_cmd = make_search_command(entry.locator)
+            params = _kernel_params(entry, eid, lpss_uuid, trial=False)
+            dflt += BOOT_BLOCK.format(entry_id=eid, search=search_cmd,
+                                      linux=entry.linux, params=params,
+                                      initrd_line=_initrd_line(entry))
+        dflt += DEFAULT_FOOTER
+        cfg += dflt
+    else:
+        cfg += 'menuentry "Default boot" { echo "No bootable entries configured." }\n'
 
-    if entries:
+    if root_entries:
         cfg += SEPARATOR
 
-    # Boot once (no trial)
-    for e in entries:
-        search_cmd = make_search_command(e.locator)
-        params = _kernel_params(e, lpss_uuid, trial=False)
-        cfg += BOOT_ONCE_ENTRY.format(id=e.id, search=search_cmd,
-                                      linux=e.linux, params=params,
-                                      initrd_line=_initrd_line(e))
+    # Boot once (currently only root, but designed for extension)
+    for eid, entry in root_entries:
+        search_cmd = make_search_command(entry.locator)
+        params = _kernel_params(entry, eid, lpss_uuid, trial=False)
+        cfg += BOOT_ONCE_ENTRY.format(id=eid, search=search_cmd,
+                                      linux=entry.linux, params=params,
+                                      initrd_line=_initrd_line(entry))
 
-    if entries:
+    if root_entries:
         cfg += SEPARATOR
 
-    # Try to switch to (trial)
-    for e in entries:
-        search_cmd = make_search_command(e.locator)
-        params = _kernel_params(e, lpss_uuid, trial=True)
-        cfg += TRIAL_ENTRY.format(id=e.id, search=search_cmd,
-                                  linux=e.linux, params=params,
-                                  initrd_line=_initrd_line(e))
+    # Trial boot (only root)
+    for eid, entry in root_entries:
+        search_cmd = make_search_command(entry.locator)
+        params = _kernel_params(entry, eid, lpss_uuid, trial=True)
+        cfg += TRIAL_ENTRY.format(id=eid, search=search_cmd,
+                                  linux=entry.linux, params=params,
+                                  initrd_line=_initrd_line(entry))
 
     cfg += SEPARATOR
     cfg += REBOOT_ENTRY
