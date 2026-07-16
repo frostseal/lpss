@@ -73,7 +73,7 @@ def main():
         '--lpss-dir',
         help='Path to mounted LPSS partition'
     )
-    subparsers = parser.add_subparsers(dest='command', required=True)
+    subparsers = parser.add_subparsers(dest='command')
 
     subparsers.add_parser('status', help='Show overall LPSS status')
     subparsers.add_parser('list', help='List all registered entries')
@@ -85,8 +85,7 @@ def main():
     # Trial boot (requires confirm)
     trial_parser = subparsers.add_parser(
         'trial',
-        help=('Try to switch default with trial boot '
-              '(require confirm after boot)')
+        help='Trial boot – transactional, requires confirmation'
     )
     trial_parser.add_argument('entry', help='Entry ID for trial')
 
@@ -116,7 +115,23 @@ def main():
         help='Regenerate grub.cfg from current configuration'
     )
 
+    subparsers.add_parser(
+        'help',
+        help='Show this help message'
+    )
+
     args = parser.parse_args()
+
+    # Show help if no command given
+    if args.command is None:
+        parser.print_help()
+        sys.exit(0)
+
+    # ---- help--- ---------------------------------------------------------
+    if args.command == 'help':
+        parser.print_help()
+        sys.exit(0)
+
     lpss_dir = _get_lpss_dir(args.lpss_dir)
 
     # ---- current ---------------------------------------------------------

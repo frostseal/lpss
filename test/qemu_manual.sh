@@ -319,11 +319,15 @@ cp "$OVMF_VARS" vars.fd
 
 step "Starting QEMU (Ctrl-A X to exit)"
 qemu-system-x86_64 \
-    -machine q35 -m 512 \
+    -enable-kvm \
+    -machine q35 \
+    -cpu host \
+    -m 512 \
     -drive file="$DISK_IMG",format=raw,if=virtio \
     -drive if=pflash,format=raw,readonly=on,file="$OVMF_CODE" \
     -drive if=pflash,format=raw,file=vars.fd \
-    -nographic -serial mon:stdio
+    -nographic \
+    -serial mon:stdio
 
 echo "QEMU exited. Disk image kept at $WORK_DIR_ABS/$DISK_IMG."
 echo "Configs saved as $WORK_DIR_ABS/lpss.conf and $WORK_DIR_ABS/grub.cfg"

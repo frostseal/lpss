@@ -74,12 +74,6 @@ def deploy_app_bundle(lpss_dir):
                 shutil.rmtree(sub_dst)
             shutil.copytree(sub_src, sub_dst)
 
-    # convenience symlink bin -> app
-    bin_link = os.path.join(lpss_dir, 'bin')
-    if os.path.lexists(bin_link):
-        os.remove(bin_link)
-    os.symlink('app', bin_link)
-
     print(f"Deployed LPSS application bundle to {app_dst}")
 
 

@@ -31,7 +31,15 @@ set menu_color_highlight=black/green
 set timeout=10
 
 search --fs-uuid {lpss_uuid} --set=root
-set default="default"
+load_env
+if [ -n "${{next_entry}}" ]; then
+    set default="${{next_entry}}"
+    save_env next_entry
+    set next_entry=
+    save_env next_entry
+else
+    set default="default"
+fi
 """
 
 TITLE_ENTRY = """\
