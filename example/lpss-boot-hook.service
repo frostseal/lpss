@@ -1,0 +1,33 @@
+# @file example/lpss-boot-hook.service
+# LPSS post-boot hook for systemd.
+#
+# Install:
+#   install -m644 lpss-boot-hook.service /etc/systemd/system/
+#   systemctl daemon-reload
+#   systemctl enable lpss-boot-hook.service
+
+
+[Unit]
+Description=LPSS post-boot hook
+After=local-fs.target
+
+[Service]
+Type=oneshot
+ExecStart=/bin/sh -c '\
+    if ! [ -x /boot/lpss/app/lpss_ctl.py ]; then \
+        echo "LPSS: control utility not found" >&2; \
+        exit 1; \
+    fi; \
+    if grep -q lpss_trial= /proc/cmdline; then \
+        echo "LPSS: trial boot detected, confirming"; \
+        if python3 /boot/lpss/app/lpss_ctl.py --lpss-dir /boot/lpss confirm; then \
+            echo "LPSS: boot hook completed successfully"; \
+        else \
+            echo "LPSS: boot hook failed" >&2; \
+            exit 1; \
+        fi; \
+    fi'
+RemainAfterExit=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -1,0 +1,41 @@
+#!/sbin/openrc-run
+# @file example/lpss-boot-hook.openrc
+# LPSS post-boot hook for OpenRC
+# Install:
+# install -m755 lpss-boot-hook.openrc /etc/init.d/lpss-boot-hook
+# rc-update add lpss-boot-hook default
+
+description="LPSS post-boot hook"
+
+depend() {
+    need localmount
+    after bootmisc
+}
+
+LPSS_CTL="/boot/lpss/app/lpss_ctl.py"
+LPSS_DIR="/boot/lpss"
+
+start() {
+    if ! grep -q 'lpss_trial=' /proc/cmdline; then
+        return 0
+    fi
+
+    ebegin "Running LPSS post-boot hook"
+    einfo "Trial boot detected, confirming slot"
+
+    if [ ! -x "$LPSS_CTL" ]; then
+        eerror "LPSS control utility not found at $LPSS_CTL"
+        eend 1
+        return 1
+    fi
+
+    if python3 "$LPSS_CTL" --lpss-dir "$LPSS_DIR" confirm; then
+        einfo "LPSS boot hook completed successfully"
+        eend 0
+        return 0
+    else
+        eerror "LPSS boot hook failed"
+        eend 1
+        return 1
+    fi
+}
