@@ -1,69 +1,138 @@
 #!/usr/bin/env python3
-# @file lpss_host_install.py
+# @file lpss_install.py
 """
-Integrate LPSS with the current host Linux.
+Install LPSS infrastructure.
 
-Performs independent installation steps:
+Two independent operations:
+1. Setup the LPSS runtime (grub.cfg, lpss.conf, flags/) on the LPSS partition.
+2. Install the LPSS application into <lpss-dir>/app.
+   This installed copy is used for further LPSS host integration.
 
-* tools       – create symbolic links for LPSS commands
-* mountpoint  – create the LPSS mount point directory
-* fstab       – add an /etc/fstab entry for the LPSS partition
-
-The LPSS partition can be specified via --lpss-device (e.g., /dev/sda2),
---lpss-uuid, or --lpss-mount (an already mounted LPSS directory).
-If no source is given, the fstab step is skipped.
-
-By default, all implemented steps are executed.
-Individual steps can be enabled or disabled with --install-* and
---skip-* flags.
-
-Examples:
-  # Full integration using a device
-  sudo lpss_host_install --lpss-device /dev/sda2
-
-  # Only update fstab
-  sudo lpss_host_install --install-fstab --lpss-device /dev/nvme0n1p3
-
-  # Only tools
-  lpss_host_install --install-tools --prefix /usr/local/bin
-
-  # Dry-run
-  lpss_host_install --dry-run --lpss-device /dev/sda2
+By default both are executed. Use --app-only or --grub-only to run only one.
 """
-
 import argparse
 import os
+import re
+import shlex
+import shutil
 import sys
 
-from lib.device import get_device_uuid
-from lib.fstab import add_entry as install_fstab_entry
-from lib.host_install import (
-    install_tools,
-    uninstall_tools,
-    install_mountpoint,
+from lib.config import load_config
+from lib.grub import generate_grub_cfg
+from lib.utils import (
+    find_grub_tool,
+    get_grub_subdir,
+    get_mount_uuid,
+    run_command,
 )
-from lib.utils import get_mount_uuid
+
+_APP_FILES = [
+    'lpss_ctl.py',
+    'lpss_import.py',
+    'lpss_install.py',
+    'lpss_host_install.py',
+]
 
 
-def _resolve_lpss_uuid(args):
-    """Return (uuid, description) from --lpss-device, --lpss-mount, or --lpss-uuid."""
-    if args.lpss_uuid:
-        return args.lpss_uuid, "command line"
-    if args.lpss_device:
-        uuid = get_device_uuid(args.lpss_device)
-        if uuid:
-            return uuid, f"device {args.lpss_device}"
-        print(f"Warning: cannot determine UUID for {args.lpss_device}",
-              file=sys.stderr)
-        return None, None
-    if args.lpss_mount:
-        uuid = get_mount_uuid(args.lpss_mount)
-        if uuid:
-            return uuid, f"mount point {args.lpss_mount}"
-        print(f"Warning: cannot determine UUID for mount {args.lpss_mount}",
-              file=sys.stderr)
-        return None, None
-    return None, None
+def install_app(lpss_dir):
+    """Copy the LPSS application into <lpss>/app."""
+    script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_root = script_dir
+    app_dst = os.path.join(lpss_dir, 'app')
+    os.makedirs(app_dst, exist_ok=True)
+
+    for fname in _APP_FILES:
+        src = os.path.join(project_root, fname)
+        if os.path.isfile(src):
+            shutil.copy2(src, os.path.join(app_dst, fname))
+
+    lib_src = os.path.join(project_root, 'lib')
+    lib_dst = os.path.join(app_dst, 'lib')
+    if os.path.isdir(lib_src):
+        if os.path.exists(lib_dst):
+            shutil.rmtree(lib_dst)
+        shutil.copytree(lib_src, lib_dst)
+
+    for sub in ['example', 'test']:
+        sub_src = os.path.join(project_root, sub)
+        sub_dst = os.path.join(app_dst, sub)
+        if os.path.isdir(sub_src):
+            if os.path.exists(sub_dst):
+                shutil.rmtree(sub_dst)
+            shutil.copytree(sub_src, sub_dst)
+
+    print(f"Application installed to {app_dst}")
+
+
+def setup_runtime(args, lpss_dir):
+    """Install/update the LPSS runtime: GRUB, lpss.conf, flags, grub.cfg."""
+    esp_dir = os.path.abspath(args.esp_dir)
+
+    if not re.fullmatch(r'^[A-Za-z0-9._-]+$', args.bootloader_id):
+        print("Error: --bootloader-id must contain only A-Z, a-z, 0-9, "
+              "'.', '_', '-'", file=sys.stderr)
+        sys.exit(1)
+
+    grub_install = args.grub_install or find_grub_tool('install')
+    if not grub_install:
+        print("Error: grub-install or grub2-install not found. "
+              "Specify with --grub-install.", file=sys.stderr)
+        sys.exit(1)
+
+    if not os.path.ismount(esp_dir):
+        print(f"Warning: {esp_dir} is not a mount point.", file=sys.stderr)
+    if not os.path.ismount(lpss_dir):
+        print(f"Warning: {lpss_dir} is not a mount point.", file=sys.stderr)
+
+    lpss_uuid = args.lpss_uuid or get_mount_uuid(lpss_dir)
+    if not lpss_uuid:
+        print("Error: could not determine LPSS UUID. "
+              "Use --lpss-uuid to specify it.", file=sys.stderr)
+        sys.exit(1)
+    print(f"LPSS UUID: {lpss_uuid}")
+
+    config_path = os.path.join(lpss_dir, 'lpss.conf')
+    if not os.path.exists(config_path):
+        with open(config_path, 'w') as f:
+            f.write(f"[lpss]\nid={lpss_uuid}\nversion=1\n")
+        print(f"Created {config_path}")
+
+    flags_dir = os.path.join(lpss_dir, 'flags')
+    os.makedirs(flags_dir, exist_ok=True)
+
+    extra_args = (
+        shlex.split(args.grub_install_extra)
+        if args.grub_install_extra
+        else []
+    )
+    grub_cmd = [
+        grub_install,
+        '--target=x86_64-efi',
+        f'--efi-directory={esp_dir}',
+        f'--boot-directory={lpss_dir}',
+        f'--bootloader-id={args.bootloader_id}',
+    ] + extra_args
+    run_command(grub_cmd,
+                desc="Installing GRUB using distribution's grub-install")
+
+    grub_subdir = get_grub_subdir(lpss_dir)
+    if not grub_subdir:
+        print("Error: grub-install did not create a 'grub' or 'grub2' "
+              "directory.", file=sys.stderr)
+        sys.exit(1)
+
+    grub_cfg_path = os.path.join(lpss_dir, grub_subdir, 'grub.cfg')
+    if not os.path.exists(grub_cfg_path):
+        open(grub_cfg_path, 'w').close()
+        print(f"Note: {grub_cfg_path} was missing, created empty file.")
+
+    print(f"GRUB directory found: {os.path.dirname(grub_cfg_path)}")
+    print(f"GRUB prefix will be: ($root)/{grub_subdir}")
+    print(f"Main grub.cfg path: {grub_cfg_path}")
+
+    config = load_config(config_path)
+    generate_grub_cfg(config, grub_cfg_path)
+    print(f"LPSS grub.cfg written to {grub_cfg_path}")
 
 
 def main():
@@ -71,144 +140,64 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-
-    src_group = parser.add_argument_group("LPSS partition source")
-    src_group.add_argument('--lpss-device', metavar='DEVICE',
-                           help='Block device of the LPSS partition '
-                                '(e.g., /dev/sda2)')
-    src_group.add_argument('--lpss-uuid', metavar='UUID',
-                           help='Filesystem UUID of the LPSS partition')
-    src_group.add_argument('--lpss-mount', metavar='PATH',
-                           help='Mount point of an already mounted LPSS partition')
-
-    parser.add_argument('--lpss-mountpoint', default='/boot/lpss',
-                        help='LPSS mount point path (default: /boot/lpss)')
-
-    step_group = parser.add_argument_group("Installation steps")
-    step_group.add_argument('--all', action='store_true',
-                            help='Run all implemented steps (default)')
-    step_group.add_argument('--install-tools', action='store_true',
-                            help='Install command symlinks')
-    step_group.add_argument('--install-mountpoint', action='store_true',
-                            help='Create the mount point directory')
-    step_group.add_argument('--install-fstab', action='store_true',
-                            help='Add fstab entry')
-    step_group.add_argument('--skip-tools', action='store_true',
-                            help='Skip tools step')
-    step_group.add_argument('--skip-mountpoint', action='store_true',
-                            help='Skip mountpoint step')
-    step_group.add_argument('--skip-fstab', action='store_true',
-                            help='Skip fstab step')
-
-    parser.add_argument('--prefix', default='/usr/local/bin',
-                        help='Installation prefix for tools (default: /usr/local/bin)')
-    parser.add_argument('--app-dir', default=None,
-                        help='Directory containing the LPSS application bundle '
-                             '(default: directory of this script)')
-    parser.add_argument('--uninstall', action='store_true',
-                        help='Remove symlinks (tools only)')
-    parser.add_argument('--dry-run', action='store_true',
-                        help='Show what would be done, without making changes')
-
+    parser.add_argument('--lpss-dir', required=True,
+                        help='Mount point of the LPSS partition')
+    parser.add_argument('--esp-dir',
+                        help='Mount point of the EFI System Partition '
+                             '(required for runtime installation)')
+    parser.add_argument('--lpss-uuid',
+                        help='UUID of the LPSS filesystem '
+                             '(auto-detected if omitted)')
+    parser.add_argument('--bootloader-id', default='LPSS',
+                        help='GRUB bootloader ID (default: LPSS)')
+    parser.add_argument('--grub-install-extra', type=str, default='',
+                        help='Extra arguments passed verbatim to grub-install '
+                             '(e.g., "--removable --no-nvram")')
+    parser.add_argument('--grub-install', type=str,
+                        help='Path to grub-install or grub2-install '
+                             '(auto-detected if omitted)')
+    parser.add_argument('--app-only', action='store_true',
+                        help='Only deploy the application, '
+                             'skip runtime installation')
+    parser.add_argument('--grub-only', action='store_true',
+                        help='Only install/update the LPSS runtime, '
+                             'skip application')
     args = parser.parse_args()
-    dry_run = args.dry_run
 
-    app_dir = args.app_dir or os.path.dirname(os.path.abspath(__file__))
+    do_app = not args.grub_only
+    do_runtime = not args.app_only
 
-    # Uninstall mode
-    if args.uninstall:
-        if args.install_tools or args.install_mountpoint or args.install_fstab:
-            parser.error("--uninstall cannot be combined with installation steps")
-        if dry_run:
-            print("Dry-run: would uninstall tools")
-        success = uninstall_tools(args.prefix, dry_run=dry_run)
-        if not success and not dry_run:
-            print("Uninstall completed with warnings.")
-            sys.exit(1)
-        print("Done.")
-        return
+    if do_runtime and not args.esp_dir:
+        print("Error: --esp-dir is required for runtime installation",
+              file=sys.stderr)
+        sys.exit(1)
 
-    # Determine steps
-    any_step = args.install_tools or args.install_mountpoint or args.install_fstab
-    run_all = not any_step
+    lpss_dir = os.path.abspath(args.lpss_dir)
 
-    steps = {}
-    if run_all:
-        steps['tools'] = not args.skip_tools
-        steps['mountpoint'] = not args.skip_mountpoint
-        steps['fstab'] = not args.skip_fstab
-    else:
-        steps['tools'] = args.install_tools
-        steps['mountpoint'] = args.install_mountpoint
-        steps['fstab'] = args.install_fstab
+    if do_app:
+        install_app(lpss_dir)
 
-    # Resolve UUID for fstab
-    uuid = None
-    if steps.get('fstab'):
-        uuid, source_desc = _resolve_lpss_uuid(args)
-        if uuid is None:
-            if run_all:
-                print("Warning: LPSS partition UUID not available; "
-                      "fstab step will be skipped.", file=sys.stderr)
-                steps['fstab'] = False
-            else:
-                print("Error: LPSS UUID is required for fstab installation.",
-                      file=sys.stderr)
-                sys.exit(1)
-        else:
-            print(f"Using LPSS UUID from {source_desc}: {uuid}")
+    if do_runtime:
+        setup_runtime(args, lpss_dir)
 
-    # Execute steps
-    results = {}
-    final_exit = 0
+    parts = []
+    if do_app:
+        parts.append("application")
+    if do_runtime:
+        parts.append("runtime")
+    if parts:
+        print(f"\nLPSS installation completed: {', '.join(parts)}")
 
-    if dry_run:
-        print("Dry-run mode: no changes will be made.\n")
-
-    if steps.get('tools'):
-        ok = install_tools(args.prefix, app_dir, dry_run=dry_run)
-        results['tools'] = "[OK]" if ok else "[FAIL]"
-        if not ok and not run_all:
-            final_exit = 1
-    else:
-        results['tools'] = "[SKIP]"
-
-    if steps.get('mountpoint'):
-        ok = install_mountpoint(args.lpss_mountpoint, dry_run=dry_run)
-        results['mountpoint'] = "[OK]" if ok else "[FAIL]"
-        if not ok and not run_all:
-            final_exit = 1
-    else:
-        results['mountpoint'] = "[SKIP]"
-
-    if steps.get('fstab'):
-        ok = install_fstab_entry(uuid, args.lpss_mountpoint, dry_run=dry_run)
-        if ok:
-            results['fstab'] = "[OK]"
-        else:
-            results['fstab'] = "[WARN] skipped"
-            if not run_all:
-                final_exit = 1
-    else:
-        results['fstab'] = "[SKIP]"
-
-    if dry_run:
-        print("\nDry-run completed. No changes made.")
-    else:
-        print("\nLPSS host integration completed\n")
-
-    print("Installed:")
-    for step in ('tools', 'mountpoint', 'fstab'):
-        status = results.get(step, "[SKIP]")
-        print(f" {status:6s} {step}")
-
-    if final_exit != 0:
-        if not dry_run:
-            print("\nSome mandatory steps failed.")
-        sys.exit(final_exit)
-
-    if not dry_run:
-        print("Done.")
+    if do_app:
+        app_path = os.path.join(lpss_dir, 'app')
+        print("\nInstalled LPSS application:")
+        print(f"  {app_path}")
+        print("\nTo integrate LPSS with this host, run:")
+        print(f"  python3 {os.path.join(app_path, 'lpss_host_install.py')}"
+              " --prefix /usr/local/bin")
+        print("\nThe original LPSS source directory is no longer required.")
+    if do_runtime:
+        print("You can now import Linux systems with 'lpss_import'.")
 
 
 if __name__ == '__main__':

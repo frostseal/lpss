@@ -5,7 +5,8 @@ Install LPSS infrastructure.
 
 Two independent operations:
 1. Setup the LPSS runtime (grub.cfg, lpss.conf, flags/) on the LPSS partition.
-2. Install the LPSS application bundle into <lpss-dir>/app.
+2. Install the LPSS application into <lpss-dir>/app.
+   This installed copy is used for further LPSS host integration.
 
 By default both are executed. Use --app-only or --grub-only to run only one.
 """
@@ -185,12 +186,16 @@ def main():
     if do_runtime:
         parts.append("runtime")
     if parts:
-        print(f"LPSS installation completed: {', '.join(parts)}")
+        print(f"\nLPSS installation completed: {', '.join(parts)}")
 
     if do_app:
-        print("Application bundle ready in <lpss>/app.")
-        print("To make LPSS commands available in this host, run:"
-              " lpss_host_install --prefix /usr/local/bin")
+        app_path = os.path.join(lpss_dir, 'app')
+        print("\nInstalled LPSS application:")
+        print(f"  {app_path}")
+        print("\nTo integrate LPSS with this host, run:")
+        print(f"  {os.path.join(app_path, 'lpss_host_install.py')}"
+              " --prefix /usr/local/bin")
+        print("\nThe original LPSS source directory may be removed.")
     if do_runtime:
         print("You can now import Linux systems with 'lpss_import'.")
 
