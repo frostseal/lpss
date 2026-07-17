@@ -3,9 +3,14 @@
 LPSS is a lightweight boot management layer for Linux systems that allows
 multiple independent Linux installations to coexist on one machine.
 
-The goal is simple: treat Linux root filesystems as replaceable system
-images that can be installed, backed up, restored, tested, and switched
+The core idea is simple: treat Linux system components as replaceable
+slots. Each slot represents an independent component managed by LPSS that
+can be installed, tested, switched, backed up, restored, or replaced
 without rebuilding the whole boot infrastructure.
+
+Currently, LPSS supports only rootfs slots. Each slot contains a Linux
+installation with its root filesystem, kernel, initramfs, and associated
+boot parameters. Additional slot types may be added in the future.
 
 Example:
 
@@ -64,25 +69,42 @@ A managed Linux system provides only:
 
 ## Basic concepts
 
+### Slot
+
+A slot is a managed system component controlled by LPSS.
+The slot type defines how LPSS handles the component.
+
+Currently, the primary slot type is `root`, which represents a Linux root
+filesystem with its associated kernel and initramfs.
+
 ### Entry
-A single bootable Linux system described by a human-readable ID
-(`arch`, `opensuse`, …), a root filesystem locator, kernel/initrd
-paths, and extra kernel options. Each entry has a `type` that defines
-how LPSS manages it (currently `root`).
+
+An entry is a configuration record describing a slot.
+
+Each entry has a human-readable ID (`arch`, `opensuse`, …), a slot type,
+a root filesystem locator, kernel/initrd paths, and extra kernel options.
+
+The entry type defines how LPSS manages the slot.
 
 ### Enabled
+
 The entry is available for manual or automatic boot.
 
 ### Default
-The default entry for its type (only one per type).  `default` implies
+
+The default entry for its type (only one per type). `default` implies
 `enabled`.
 
 ### Trial boot
-Try to switch current default entry to another entry
-via try-boot that requires confirmation after boot. The kernel command
-line receives `lpss_trial=1`.  After a successful test,
-`lpss_ctl confirm` makes the trial entry the new default.  Use
-`lpss_ctl trial`.
+
+A trial boot temporarily switches the active entry and requires
+confirmation after boot. The kernel command line receives
+`lpss_trial=1`.
+
+After a successful test, `lpss_ctl confirm` makes the trial entry the new
+default.
+
+Use `lpss_ctl trial` to start a trial boot.
 
 ---
 
@@ -355,8 +377,3 @@ sudo ./test/smoke_test.py --dir /tmp/lpss-smoke
 The test prints `[PASS]` / `[FAIL]` for each check.
 
 ---
-
-LPSS keeps Linux systems simple:
-
-**A Linux installation should be replaceable like any other component
-of the system.**
