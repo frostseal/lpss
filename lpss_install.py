@@ -3,61 +3,48 @@
 """
 Install LPSS infrastructure.
 
-Performs two independent operations:
+Two independent operations:
+1. Setup the LPSS runtime (grub.cfg, lpss.conf, flags/) on the LPSS partition.
+2. Install the LPSS application bundle into <lpss-dir>/app.
 
-1. Install/update the LPSS runtime (grub.cfg, lpss.conf, flags/)
-   onto the LPSS partition.
-2. Deploy the LPSS application bundle into <lpss-dir>/app, making
-   all LPSS utilities portable and accessible from any booted slot.
-
-The two operations are controlled via --app-only and --grub-only flags.
-By default, both are executed.
-
-Options:
-  --app-only      Only deploy the application bundle, skip runtime
-                  installation (no GRUB, no UUID, no ESP).
-  --grub-only     Only install/update the LPSS runtime, skip
-                  application bundle copy.
+By default both are executed. Use --app-only or --grub-only to run only one.
 """
 import argparse
 import os
 import re
 import shlex
 import shutil
-import subprocess
 import sys
 
 from lib.config import load_config
 from lib.grub import generate_grub_cfg
-from lib.utils import find_grub_tool, get_grub_subdir, get_mount_uuid
+from lib.utils import (
+    find_grub_tool,
+    get_grub_subdir,
+    get_mount_uuid,
+    run_command,
+)
+
+_APP_FILES = [
+    'lpss_ctl.py',
+    'lpss_import.py',
+    'lpss_install.py',
+    'lpss_host_install.py',
+]
 
 
-def _run(cmd, desc=None):
-    if desc:
-        print(desc)
-    print(f"  Running: {' '.join(cmd)}")
-    try:
-        subprocess.run(cmd, check=True, text=True)
-    except subprocess.CalledProcessError as e:
-        print(f"Error: command failed: {e}", file=sys.stderr)
-        sys.exit(1)
-
-
-def deploy_app_bundle(lpss_dir):
-    """Copy the entire LPSS application bundle into <lpss>/app."""
+def install_app_bundle(lpss_dir):
+    """Copy the LPSS application bundle into <lpss>/app."""
     script_dir = os.path.dirname(os.path.abspath(__file__))
     project_root = script_dir
     app_dst = os.path.join(lpss_dir, 'app')
     os.makedirs(app_dst, exist_ok=True)
 
-    # Python scripts
-    for fname in ['lpss_ctl.py', 'lpss_import.py', 'lpss_install.py',
-                  'lpss_host_install.py']:
+    for fname in _APP_FILES:
         src = os.path.join(project_root, fname)
         if os.path.isfile(src):
             shutil.copy2(src, os.path.join(app_dst, fname))
 
-    # lib/
     lib_src = os.path.join(project_root, 'lib')
     lib_dst = os.path.join(app_dst, 'lib')
     if os.path.isdir(lib_src):
@@ -65,7 +52,6 @@ def deploy_app_bundle(lpss_dir):
             shutil.rmtree(lib_dst)
         shutil.copytree(lib_src, lib_dst)
 
-    # example/ and test/
     for sub in ['example', 'test']:
         sub_src = os.path.join(project_root, sub)
         sub_dst = os.path.join(app_dst, sub)
@@ -74,10 +60,10 @@ def deploy_app_bundle(lpss_dir):
                 shutil.rmtree(sub_dst)
             shutil.copytree(sub_src, sub_dst)
 
-    print(f"Deployed LPSS application bundle to {app_dst}")
+    print(f"Application bundle installed to {app_dst}")
 
 
-def install_runtime(args, lpss_dir):
+def setup_runtime(args, lpss_dir):
     """Install/update the LPSS runtime: GRUB, lpss.conf, flags, grub.cfg."""
     esp_dir = os.path.abspath(args.esp_dir)
 
@@ -97,7 +83,6 @@ def install_runtime(args, lpss_dir):
     if not os.path.ismount(lpss_dir):
         print(f"Warning: {lpss_dir} is not a mount point.", file=sys.stderr)
 
-    # Determine LPSS UUID
     lpss_uuid = args.lpss_uuid or get_mount_uuid(lpss_dir)
     if not lpss_uuid:
         print("Error: could not determine LPSS UUID. "
@@ -105,19 +90,20 @@ def install_runtime(args, lpss_dir):
         sys.exit(1)
     print(f"LPSS UUID: {lpss_uuid}")
 
-    # Create lpss.conf if missing
     config_path = os.path.join(lpss_dir, 'lpss.conf')
     if not os.path.exists(config_path):
         with open(config_path, 'w') as f:
             f.write(f"[lpss]\nid={lpss_uuid}\nversion=1\n")
         print(f"Created {config_path}")
 
-    # Create flags/ if missing
     flags_dir = os.path.join(lpss_dir, 'flags')
     os.makedirs(flags_dir, exist_ok=True)
 
-    # Run grub-install
-    extra_args = shlex.split(args.grub_install_extra) if args.grub_install_extra else []
+    extra_args = (
+        shlex.split(args.grub_install_extra)
+        if args.grub_install_extra
+        else []
+    )
     grub_cmd = [
         grub_install,
         '--target=x86_64-efi',
@@ -125,7 +111,8 @@ def install_runtime(args, lpss_dir):
         f'--boot-directory={lpss_dir}',
         f'--bootloader-id={args.bootloader_id}',
     ] + extra_args
-    _run(grub_cmd, desc="Installing GRUB using distribution's grub-install")
+    run_command(grub_cmd,
+                desc="Installing GRUB using distribution's grub-install")
 
     grub_subdir = get_grub_subdir(lpss_dir)
     if not grub_subdir:
@@ -186,24 +173,22 @@ def main():
 
     lpss_dir = os.path.abspath(args.lpss_dir)
 
-    # Deploy application bundle
     if do_app:
-        deploy_app_bundle(lpss_dir)
+        install_app_bundle(lpss_dir)
 
-    # Install/update runtime
     if do_runtime:
-        install_runtime(args, lpss_dir)
+        setup_runtime(args, lpss_dir)
 
-    # Final summary
     parts = []
     if do_app:
         parts.append("application bundle")
     if do_runtime:
         parts.append("runtime")
     if parts:
-        print(f"\nLPSS {' and '.join(parts)} installed successfully on {lpss_dir}.")
+        print(f"LPSS installation completed: {', '.join(parts)}")
+
     if do_app:
-        print("The application bundle is ready in <lpss>/app.")
+        print("Application bundle ready in <lpss>/app.")
         print("To make LPSS commands available in this host, run:"
               " lpss_host_install --prefix /usr/local/bin")
     if do_runtime:

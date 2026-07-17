@@ -3,28 +3,19 @@
 """
 GRUB configuration generator for LPSS.
 
-Generates a themed grub.cfg.  Menu structure:
-
-    === LPSS Boot Manager ===
-    Default boot
-    ──────────────────────────
-    Boot once: <entry-id>    (no trial flag)
-    ──────────────────────────
-    Try to switch to: <entry-id>   (trial, adds lpss_trial=1)
-    ──────────────────────────
-    Reboot
-    UEFI Firmware Setup
+Generates a themed grub.cfg with LPSS boot menu entries.
 """
 
 import sys
+
 from lib.config import LPSSConfig
 from lib.utils import make_search_command
 
 
-# ---- Templates ----------------------------------------------------------
+# GRUB configuration templates
 
 HEADER = """\
-# LPSS Boot Manager – generated grub.cfg
+# LPSS Boot Manager - generated grub.cfg
 # Green Forest theme
 set menu_color_normal=green/black
 set menu_color_highlight=black/green
@@ -43,7 +34,8 @@ fi
 """
 
 TITLE_ENTRY = """\
-menuentry "=-_ Linux Partition Slot System _-=" --class lpss-title --unrestricted {
+menuentry "=-_ Linux Partition Slot System _-=" \
+--class lpss-title --unrestricted {
     true
 }
 """
@@ -96,7 +88,8 @@ menuentry "Boot once: {id}" --id=once_{id} --class lpss-once {{
 """
 
 TRIAL_ENTRY = """\
-menuentry "Try to switch to: {id}" --id=entry_{id} --class lpss-trial {{
+menuentry "Try to switch to: {id}" --id=entry_{id} \
+--class lpss-trial {{
     {search}
     linux {linux} {params}
 {initrd_line}\
@@ -104,7 +97,8 @@ menuentry "Try to switch to: {id}" --id=entry_{id} --class lpss-trial {{
 """
 
 SEPARATOR = """\
-menuentry "──────────────────────────" --class lpss-sep --unrestricted {
+menuentry "--------------------------" \
+--class lpss-sep --unrestricted {
     true
 }
 """
@@ -122,13 +116,13 @@ menuentry "UEFI Firmware Setup" --class lpss-uefi {
 """
 
 
-# ---- helpers ------------------------------------------------------------
+# Kernel parameters
 
 _ROOT_PARAM_MAP = {
-    "label":     "root=LABEL={value}",
+    "label": "root=LABEL={value}",
     "partlabel": "root=PARTLABEL={value}",
-    "fsuuid":    "root=UUID={value}",
-    "partuuid":  "root=PARTUUID={value}",
+    "fsuuid": "root=UUID={value}",
+    "partuuid": "root=PARTUUID={value}",
 }
 
 
@@ -137,102 +131,131 @@ def _make_root_param(locator: str) -> str:
         kind, value = locator.split(":", 1)
     except ValueError:
         raise ValueError(f"Invalid locator format: {locator}")
+
     template = _ROOT_PARAM_MAP.get(kind)
     if template is None:
-        raise ValueError(f"Unsupported locator type for root=: {kind}")
+        raise ValueError(
+            f"Unsupported locator type for root=: {kind}"
+        )
+
     return template.format(value=value)
 
 
 def _kernel_params(entry, entry_id: str, lpss_uuid: str,
                    trial: bool = False) -> str:
-    root_param = _make_root_param(entry.locator)
     params = [
-        root_param,
+        _make_root_param(entry.locator),
         entry.options,
         f"lpss_uuid={lpss_uuid}",
         f"lpss_entry={entry_id}",
     ]
+
     if trial:
         params.append("lpss_trial=1")
+
     return " ".join(p for p in params if p)
 
 
 def _initrd_line(entry) -> str:
-    """Return a GRUB initrd command if the entry has an initrd, else empty."""
+    """Return GRUB initrd command when initrd exists."""
     if entry.initrd:
         return f"        initrd {entry.initrd}\n"
+
     return ""
 
 
-# ---- public API ---------------------------------------------------------
+# Public API
 
 def generate_grub_cfg(config: LPSSConfig,
                       output_path: str,
                       include_trial: bool = True) -> None:
+    """Generate grub.cfg from LPSS configuration."""
+
     lpss_uuid = config.uuid
 
-    # Separate entries by type
     root_entries = []
     other_entries = []
+
     for eid, entry in config.entries.items():
-        if entry.type == 'root':
+        if entry.type == "root":
             root_entries.append((eid, entry))
         else:
             other_entries.append((eid, entry))
 
-    # Warn about unsupported entry types
     for eid, entry in other_entries:
-        print(f"Warning: entry '{eid}' has unsupported type "
-              f"'{entry.type}', it will not appear in the GRUB menu.",
-              file=sys.stderr)
+        print(
+            f"Warning: entry '{eid}' has unsupported type "
+            f"'{entry.type}', it will not appear in the GRUB menu.",
+            file=sys.stderr
+        )
 
-    # ---- Build configuration --------------------------------------------
     cfg = HEADER.format(lpss_uuid=lpss_uuid)
     cfg += TITLE_ENTRY
 
-    # Default boot (only root entries)
     if root_entries:
-        dflt = DEFAULT_ENTRY
+        default_cfg = DEFAULT_ENTRY
+
         for eid, entry in root_entries:
-            dflt += CHECK_DEFAULT_ENABLED.format(entry_id=eid)
+            default_cfg += CHECK_DEFAULT_ENABLED.format(
+                entry_id=eid
+            )
+
         for eid, entry in root_entries:
-            dflt += CHECK_ENABLED.format(entry_id=eid)
+            default_cfg += CHECK_ENABLED.format(
+                entry_id=eid
+            )
+
         for eid, entry in root_entries:
-            search_cmd = make_search_command(entry.locator)
-            params = _kernel_params(entry, eid, lpss_uuid, trial=False)
-            dflt += BOOT_BLOCK.format(entry_id=eid, search=search_cmd,
-                                      linux=entry.linux, params=params,
-                                      initrd_line=_initrd_line(entry))
-        dflt += DEFAULT_FOOTER
-        cfg += dflt
+            default_cfg += BOOT_BLOCK.format(
+                entry_id=eid,
+                search=make_search_command(entry.locator),
+                linux=entry.linux,
+                params=_kernel_params(
+                    entry, eid, lpss_uuid
+                ),
+                initrd_line=_initrd_line(entry)
+            )
+
+        default_cfg += DEFAULT_FOOTER
+        cfg += default_cfg
     else:
-        cfg += 'menuentry "Default boot" { echo "No bootable entries configured." }\n'
+        cfg += (
+            'menuentry "Default boot" '
+            '{ echo "No bootable entries configured." }\n'
+        )
 
     if root_entries:
         cfg += SEPARATOR
 
-    # Boot once (currently only root, but designed for extension)
     for eid, entry in root_entries:
-        search_cmd = make_search_command(entry.locator)
-        params = _kernel_params(entry, eid, lpss_uuid, trial=False)
-        cfg += BOOT_ONCE_ENTRY.format(id=eid, search=search_cmd,
-                                      linux=entry.linux, params=params,
-                                      initrd_line=_initrd_line(entry))
+        cfg += BOOT_ONCE_ENTRY.format(
+            id=eid,
+            search=make_search_command(entry.locator),
+            linux=entry.linux,
+            params=_kernel_params(
+                entry, eid, lpss_uuid
+            ),
+            initrd_line=_initrd_line(entry)
+        )
 
     if root_entries:
         cfg += SEPARATOR
 
-    # Trial boot (only root)
-    for eid, entry in root_entries:
-        search_cmd = make_search_command(entry.locator)
-        params = _kernel_params(entry, eid, lpss_uuid, trial=True)
-        cfg += TRIAL_ENTRY.format(id=eid, search=search_cmd,
-                                  linux=entry.linux, params=params,
-                                  initrd_line=_initrd_line(entry))
+    if include_trial:
+        for eid, entry in root_entries:
+            cfg += TRIAL_ENTRY.format(
+                id=eid,
+                search=make_search_command(entry.locator),
+                linux=entry.linux,
+                params=_kernel_params(
+                    entry, eid, lpss_uuid, trial=True
+                ),
+                initrd_line=_initrd_line(entry)
+            )
 
     cfg += SEPARATOR
     cfg += REBOOT_ENTRY
     cfg += UEFI_ENTRY
 
-    with open(output_path, 'w') as f:
+    with open(output_path, "w") as f:
         f.write(cfg)

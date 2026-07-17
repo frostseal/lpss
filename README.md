@@ -156,14 +156,16 @@ The application bundle is self‑contained and can be used directly from
 any booted slot via `python3 /mnt/lpss/app/lpss_ctl.py ...`.
 
 ### 4. (Optional) Host integration
-To make LPSS commands available in the current host without typing the
-full Python path, create symbolic links:
+To make LPSS commands available in the current host and to automatically
+mount the LPSS partition at `/boot/lpss`, run:
 
 ```bash
-lpss_host_install --prefix /usr/local/bin
+sudo lpss_host_install --lpss-device /dev/sda2
 ```
 
-This is optional — the application bundle works without it.
+This installs command symlinks, creates `/boot/lpss` (if needed) and adds
+an `/etc/fstab` entry.  Each step can be controlled individually; see
+`lpss_host_install --help` for details.
 
 ### 5. Import a Linux system
 Mount the root filesystem of your existing installation:
@@ -253,7 +255,7 @@ All tools accept `--lpss-dir` (preferred) or the environment variable
 | `lpss_install`    | Install the LPSS runtime and/or deploy the application bundle. |
 | `lpss_import`     | Register an existing Linux installation as an LPSS entry. |
 | `lpss_ctl`        | Manage entries — `enable`, `disable`, `default`, `trial`, `confirm`, `apply`, `status`, `list`, `current`. |
-| `lpss_host_install`| (optional) Integrate LPSS commands with the current host Linux via symlinks. |
+| `lpss_host_install`| (optional) Integrate LPSS with the host: install symlink for tools, create mountpoint, update fstab. |
 | `lpss_check`      | (planned) Diagnose configuration consistency. |
 
 `lpss_ctl current` reads the running entry from `/proc/cmdline`.
@@ -327,7 +329,8 @@ systems with an ext4 LPSS partition.  What is implemented:
 - `lpss_install`, `lpss_import`, `lpss_ctl` with all listed commands,
 - `partlabel`, `label`, `fsuuid` locators,
 - `root` type only,
-- `smoke_test.py` for offline validation.
+- `smoke_test.py` for offline validation,
+- `lpss_host_install` for host integration (symlinks, mountpoint, fstab).
 
 Planned:
 

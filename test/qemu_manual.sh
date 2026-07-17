@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # @file test/qemu_manual.sh
-# Interactive LPSS test in QEMU using a pre‑built rootfs tarball.
+# Interactive LPSS test in QEMU using a pre-built rootfs tarball.
 # The user supplies the tarball (--rootfs) that contains /boot with
 # kernel/initrd.  The script creates two identical slots, changes
 # their hostnames, installs LPSS and boots via QEMU.
@@ -25,16 +25,16 @@
 
 set -euo pipefail
 
-# ---- defaults -----------------------------------------------------------
+# defaults
 WORK_DIR="build/qemu-test"
 ROOTFS_TGZ=""
-RESERVE_PCT=10 # extra space in percent of the rootfs size
+RESERVE_PCT=10
 ESP_MB=128
 LPSS_MB=256
 BUILD_ONLY=false
 RUN_ONLY=false
 
-# ---- parse arguments ----------------------------------------------------
+# parse arguments
 while [[ $# -gt 0 ]]; do
     case "$1" in
     --rootfs)
@@ -69,19 +69,10 @@ while [[ $# -gt 0 ]]; do
 done
 
 if $RUN_ONLY; then
-    if [[ -z "$WORK_DIR" ]]; then
-        echo "ERROR: --dir is required with --run-only" >&2
-        exit 1
-    fi
+    [[ -z "$WORK_DIR" ]] && die "--dir is required with --run-only"
 else
-    if [[ -z "$ROOTFS_TGZ" ]]; then
-        echo "ERROR: --rootfs is required for building." >&2
-        exit 1
-    fi
-    if [[ ! -f "$ROOTFS_TGZ" ]]; then
-        echo "ERROR: rootfs tarball not found: $ROOTFS_TGZ" >&2
-        exit 1
-    fi
+    [[ -z "$ROOTFS_TGZ" ]] && die "--rootfs is required for building"
+    [[ ! -f "$ROOTFS_TGZ" ]] && die "rootfs tarball not found: $ROOTFS_TGZ"
 fi
 
 # absolute paths
@@ -92,7 +83,7 @@ WORK_DIR_ABS="$(cd "$(dirname "$WORK_DIR")" 2>/dev/null && pwd)/$(basename "$WOR
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PROJECT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 
-# ---- locate LPSS tools --------------------------------------------------
+# locate LPSS tools
 if [[ -x "$PROJECT_DIR/lpss_install.py" ]]; then
     LPSS_INSTALL="$PROJECT_DIR/lpss_install.py"
     LPSS_IMPORT="$PROJECT_DIR/lpss_import.py"
@@ -102,21 +93,26 @@ elif command -v lpss_install >/dev/null 2>&1; then
     LPSS_IMPORT="lpss_import"
     LPSS_CTL="lpss_ctl"
 else
-    echo "ERROR: LPSS tools not found." >&2
-    exit 1
+    die "LPSS tools not found"
 fi
 
-# ---- OVMF firmware ------------------------------------------------------
+# OVMF firmware
 find_ovmf() {
     local candidates_code=(
-        /usr/share/qemu/ovmf-x86_64-4m-code.bin /usr/share/qemu/ovmf-x86_64-code.bin
-        /usr/share/edk2-ovmf/OVMF_CODE.fd /usr/share/edk2/ovmf/OVMF_CODE.fd
-        /usr/share/OVMF/OVMF_CODE.fd /usr/share/qemu-ovmf/OVMF_CODE.fd
+        /usr/share/qemu/ovmf-x86_64-4m-code.bin
+        /usr/share/qemu/ovmf-x86_64-code.bin
+        /usr/share/edk2-ovmf/OVMF_CODE.fd
+        /usr/share/edk2/ovmf/OVMF_CODE.fd
+        /usr/share/OVMF/OVMF_CODE.fd
+        /usr/share/qemu-ovmf/OVMF_CODE.fd
     )
     local candidates_vars=(
-        /usr/share/qemu/ovmf-x86_64-4m-vars.bin /usr/share/qemu/ovmf-x86_64-vars.bin
-        /usr/share/edk2-ovmf/OVMF_VARS.fd /usr/share/edk2/ovmf/OVMF_VARS.fd
-        /usr/share/OVMF/OVMF_VARS.fd /usr/share/qemu-ovmf/OVMF_VARS.fd
+        /usr/share/qemu/ovmf-x86_64-4m-vars.bin
+        /usr/share/qemu/ovmf-x86_64-vars.bin
+        /usr/share/edk2-ovmf/OVMF_VARS.fd
+        /usr/share/edk2/ovmf/OVMF_VARS.fd
+        /usr/share/OVMF/OVMF_VARS.fd
+        /usr/share/qemu-ovmf/OVMF_VARS.fd
     )
     for code in "${candidates_code[@]}"; do
         if [[ -f "$code" ]]; then
@@ -131,8 +127,7 @@ find_ovmf() {
         fi
     done
     if [[ -z "${OVMF_CODE:-}" ]] || [[ -z "${OVMF_VARS:-}" ]]; then
-        echo "ERROR: OVMF firmware files not found." >&2
-        exit 1
+        die "OVMF firmware files not found"
     fi
 }
 
@@ -142,13 +137,13 @@ die() {
 }
 step() { echo "==> $*"; }
 
-# ---- checks -------------------------------------------------------------
+# checks
 step "Checking host dependencies"
 command -v qemu-system-x86_64 >/dev/null || die "Missing qemu-system-x86_64"
 command -v python3 >/dev/null || die "Missing python3"
 find_ovmf
 
-# ---- build phase --------------------------------------------------------
+# build phase
 if ! $RUN_ONLY; then
     mkdir -p "$WORK_DIR_ABS"
     cd "$WORK_DIR_ABS" || die "Cannot enter $WORK_DIR_ABS"
@@ -160,11 +155,9 @@ if ! $RUN_ONLY; then
     tar xzf "$ROOTFS_TGZ_ABS" -C slot_a
     tar xzf "$ROOTFS_TGZ_ABS" -C slot_b
 
-    # set distinct hostnames
     echo "slot-a" >slot_a/etc/hostname
     echo "slot-b" >slot_b/etc/hostname
 
-    # detect kernel and initrd
     export PYTHONPATH="$PROJECT_DIR"
     KERNEL_A=$(python3 -c "
 from lib.utils import find_kernel_initrd_in_root
@@ -195,7 +188,7 @@ print(i or '')
     echo " slot-a: $KERNEL_A / $INITRD_A"
     echo " slot-b: $KERNEL_B / $INITRD_B"
 
-    # ---- compute partition sizes --------------------------------------------
+    # Compute partition sizes
     step "Computing partition sizes"
     SLOT_SIZE_KIB=$(du -sk slot_a | awk '{print $1}')
     SLOT_SIZE_MIB=$(((SLOT_SIZE_KIB + 1023) / 1024))
@@ -203,12 +196,12 @@ print(i or '')
     ROOT_PART_MIB=$((SLOT_SIZE_MIB + RESERVE_MIB))
     TOTAL_MIB=$((ESP_MB + LPSS_MB + 2 * ROOT_PART_MIB + 50))
 
-    echo "Rootfs size: ${SLOT_SIZE_KIB} KiB (≈ ${SLOT_SIZE_MIB} MiB)"
-    echo "Reserve: ${RESERVE_PCT}% + 50 MiB → ${RESERVE_MIB} MiB"
+    echo "Rootfs size: ${SLOT_SIZE_KIB} KiB (~ ${SLOT_SIZE_MIB} MiB)"
+    echo "Reserve: ${RESERVE_PCT}% + 50 MiB -> ${RESERVE_MIB} MiB"
     echo "Each root partition: ${ROOT_PART_MIB} MiB"
     echo "Total disk image: ${TOTAL_MIB} MiB"
 
-    # ---- create disk image --------------------------------------------------
+    # Create disk image
     DISK_IMG="disk.img"
     step "Creating disk image (${TOTAL_MIB} MiB)"
     rm -f "$DISK_IMG"
@@ -230,7 +223,7 @@ print(i or '')
     mkfs.ext4 -F "${LOOP}p2"
     losetup -d "$LOOP"
 
-    # ---- mount and populate partitions --------------------------------------
+    # Mount and populate partitions
     step "Mounting partitions"
     LOOP=$(losetup --show -fP "$DISK_IMG")
     mkdir -p mnt/esp mnt/lpss mnt/root_a mnt/root_b
@@ -252,13 +245,13 @@ print(i or '')
     cp -a slot_a/. mnt/root_a/
     cp -a slot_b/. mnt/root_b/
 
-    # ---- install LPSS -------------------------------------------------------
+    # Install LPSS
     step "Installing LPSS"
     rm -f mnt/lpss/grub.cfg mnt/lpss/grub2/grub.cfg
     "$LPSS_INSTALL" --lpss-dir "$PWD/mnt/lpss" --esp-dir "$PWD/mnt/esp" \
         --grub-install-extra="--removable --no-nvram"
 
-    # ---- import slots -------------------------------------------------------
+    # Import slots
     step "Importing slots"
     "$LPSS_IMPORT" --lpss-dir "$PWD/mnt/lpss" \
         --root "$PWD/mnt/root_a" --id slot-a --locator label:root.a \
@@ -269,16 +262,18 @@ print(i or '')
         --linux "/$KERNEL_B" --initrd "/$INITRD_B" \
         --options "ro console=ttyS0"
 
-    # ---- activate slot-a ----------------------------------------------------
-    step "Activating slot-a and regenerating grub.cfg"
+    # Set slot-a as default
+    step "Setting slot-a as default and regenerating grub.cfg"
     "$LPSS_CTL" --lpss-dir "$PWD/mnt/lpss" enable slot-a
     "$LPSS_CTL" --lpss-dir "$PWD/mnt/lpss" default slot-a
     "$LPSS_CTL" --lpss-dir "$PWD/mnt/lpss" apply
 
-    # ---- save debugging artifacts -------------------------------------------
+    # Save debugging artifacts
     if [[ -d mnt/lpss/grub2 ]]; then
         GRUB_DIR="mnt/lpss/grub2"
-    else GRUB_DIR="mnt/lpss/grub"; fi
+    else
+        GRUB_DIR="mnt/lpss/grub"
+    fi
 
     echo "Saving configs to $WORK_DIR_ABS/"
     cp mnt/lpss/lpss.conf "$WORK_DIR_ABS/lpss.conf"
@@ -307,7 +302,7 @@ print(i or '')
     fi
 fi
 
-# ---- run phase ----------------------------------------------------------
+# run phase
 cd "$WORK_DIR_ABS" || die "Cannot enter $WORK_DIR_ABS"
 DISK_IMG="disk.img"
 if [[ ! -f "$DISK_IMG" ]]; then
