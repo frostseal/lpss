@@ -9,17 +9,24 @@ Generates a themed grub.cfg with LPSS boot menu entries.
 import sys
 
 from lib.config import LPSSConfig
+from lib.generator_config import load_generator_config
 from lib.utils import make_search_command
 
+# Default values when generator.conf is absent or section is missing
+_DEFAULT_GRUB_SETTINGS = {
+    "timeout": "10",
+    "menu_color_normal": "green/black",
+    "menu_color_highlight": "black/green",
+}
 
 # GRUB configuration templates
 
 HEADER = """\
 # LPSS Boot Manager - generated grub.cfg
 # Green Forest theme
-set menu_color_normal=green/black
-set menu_color_highlight=black/green
-set timeout=10
+set menu_color_normal={menu_color_normal}
+set menu_color_highlight={menu_color_highlight}
+set timeout={timeout}
 
 search --fs-uuid {lpss_uuid} --set=root
 load_env
@@ -168,10 +175,21 @@ def _initrd_line(entry) -> str:
 
 def generate_grub_cfg(config: LPSSConfig,
                       output_path: str,
-                      include_trial: bool = True) -> None:
-    """Generate grub.cfg from LPSS configuration."""
+                      include_trial: bool = True,
+                      lpss_dir: str = None) -> None:
+    """Generate grub.cfg from LPSS configuration.
+
+    lpss_dir – path to LPSS partition; used to read generator.conf.
+    If omitted, only default settings are applied.
+    """
 
     lpss_uuid = config.uuid
+
+    # Load generator settings for grub
+    grub_settings = _DEFAULT_GRUB_SETTINGS.copy()
+    if lpss_dir:
+        gen_config = load_generator_config(lpss_dir)
+        grub_settings.update(gen_config.get("grub", {}))
 
     root_entries = []
     other_entries = []
@@ -189,7 +207,12 @@ def generate_grub_cfg(config: LPSSConfig,
             file=sys.stderr
         )
 
-    cfg = HEADER.format(lpss_uuid=lpss_uuid)
+    cfg = HEADER.format(
+        lpss_uuid=lpss_uuid,
+        timeout=grub_settings["timeout"],
+        menu_color_normal=grub_settings["menu_color_normal"],
+        menu_color_highlight=grub_settings["menu_color_highlight"],
+    )
     cfg += TITLE_ENTRY
 
     if root_entries:

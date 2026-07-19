@@ -111,7 +111,7 @@ def main():
     default_parser.add_argument('entry', help='Entry ID')
 
     subparsers.add_parser(
-        'apply',
+        'generate',
         help='Regenerate grub.cfg from current configuration'
     )
 
@@ -225,7 +225,7 @@ def main():
 
         if not menu_entry_exists(grub_cfg_path, entry_id):
             print(f"Error: grub.cfg does not contain menu entry for "
-                  f"'{entry_id}'. Run 'apply' to regenerate.",
+                  f"'{entry_id}'. Run 'generate' to regenerate.",
                   file=sys.stderr)
             sys.exit(1)
 
@@ -352,9 +352,9 @@ def main():
         print(f"Entry '{entry_id}' is now the default "
               f"for type '{entry_type}'.")
 
-    # ---- apply -----------------------------------------------------------
-    elif args.command == 'apply':
-        generate_grub_cfg(config, grub_cfg_path)
+    # ---- generate -----------------------------------------------------------
+    elif args.command == 'generate':
+        generate_grub_cfg(config, grub_cfg_path, lpss_dir=lpss_dir)
         print(f"Generated {grub_cfg_path}")
 
     else:

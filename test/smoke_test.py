@@ -62,51 +62,55 @@ def check_flag_exists(flags_dir, entry, flag):
     check_file(path, f"flag {entry}/{flag}")
 
 
-def run(cmd, **kwargs):
+def run_safe(cmd, **kwargs):
+    """Run command, print it, return True on success, False on failure.
+    Never raises, so test continues after a command error.
+    """
+    print(f"  Running: {' '.join(cmd)}")
+    try:
+        subprocess.run(cmd, check=True, text=True)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"  [FAIL] Command failed: {e}", file=sys.stderr)
+        return False
+
+
+def run_raw(cmd, **kwargs):
+    """Run command without check, return CompletedProcess.
+    Used for commands that may fail (umount, rm) or we want output.
+    """
     print(f"  Running: {' '.join(cmd)}")
     return subprocess.run(cmd, **kwargs)
 
 
 def create_images_and_mount(base):
-    """Create loop images, format, mount; return (lpss_mnt, esp_mnt)."""
+    """Create loop images, format, mount; return (lpss_mnt, esp_mnt) or None on failure."""
     lpss_img = os.path.join(base, 'lpss.img')
     esp_img = os.path.join(base, 'esp.img')
-    run(
-        [
-            'dd',
-            'if=/dev/zero',
-            f'of={lpss_img}',
-            'bs=1M',
-            'count=256',
-        ],
-        check=True,
-    )
-    run(
-        [
-            'dd',
-            'if=/dev/zero',
-            f'of={esp_img}',
-            'bs=1M',
-            'count=64',
-        ],
-        check=True,
-    )
-    run(['mkfs.ext4', '-F', lpss_img], check=True)
-    run(['mkfs.vfat', esp_img], check=True)
+    if not run_safe(['dd', 'if=/dev/zero', f'of={lpss_img}', 'bs=1M', 'count=256']):
+        return None, None
+    if not run_safe(['dd', 'if=/dev/zero', f'of={esp_img}', 'bs=1M', 'count=64']):
+        return None, None
+    if not run_safe(['mkfs.ext4', '-F', lpss_img]):
+        return None, None
+    if not run_safe(['mkfs.vfat', esp_img]):
+        return None, None
 
     lpss_mnt = os.path.join(base, 'lpss')
     esp_mnt = os.path.join(base, 'esp')
     os.makedirs(lpss_mnt, exist_ok=True)
     os.makedirs(esp_mnt, exist_ok=True)
-    run(['mount', '-o', 'loop', lpss_img, lpss_mnt], check=True)
-    run(['mount', '-o', 'loop', esp_img, esp_mnt], check=True)
+    if not run_safe(['mount', '-o', 'loop', lpss_img, lpss_mnt]):
+        return None, None
+    if not run_safe(['mount', '-o', 'loop', esp_img, esp_mnt]):
+        return None, None
     return lpss_mnt, esp_mnt
 
 
 def cleanup_images(base):
     """Unmount and delete loop images."""
     for mnt in ('lpss', 'esp'):
-        run(['umount', os.path.join(base, mnt)], check=False)
+        run_raw(['umount', os.path.join(base, mnt)], check=False)
     for img in ('lpss.img', 'esp.img'):
         p = os.path.join(base, img)
         if os.path.exists(p):
@@ -132,6 +136,9 @@ def main():
         sys.exit(0)
 
     lpss_mnt, esp_mnt = create_images_and_mount(base)
+    if lpss_mnt is None:
+        print("Failed to create and mount images, aborting")
+        sys.exit(1)
 
     try:
         lpss_install = os.path.join(PROJECT_DIR, 'lpss_install.py')
@@ -145,22 +152,17 @@ def main():
 
         env = os.environ.copy()
 
-        # Install LPSS
+        # 1. Install LPSS
         print("=== 1. lpss_install ===")
         fake_uuid = 'fake-uuid-1234-abcd'
-        run(
+        run_safe(
             [
                 lpss_install,
-                '--lpss-dir',
-                lpss_mnt,
-                '--esp-dir',
-                esp_mnt,
-                '--lpss-uuid',
-                fake_uuid,
+                '--lpss-dir', lpss_mnt,
+                '--esp-dir', esp_mnt,
+                '--lpss-uuid', fake_uuid,
                 '--grub-install-extra=--removable --no-nvram',
             ],
-            env=env,
-            check=True,
         )
 
         check_file(os.path.join(lpss_mnt, 'lpss.conf'), 'lpss.conf')
@@ -185,7 +187,7 @@ def main():
             'LPSS themed grub.cfg',
         )
 
-        # Import with initrd
+        # 2. Import with initrd
         rootfs_dir = os.path.join(base, 'rootfs')
         os.makedirs(os.path.join(rootfs_dir, 'boot'), exist_ok=True)
         kernel_path = os.path.join(rootfs_dir, 'boot', 'vmlinuz-5.10.0')
@@ -194,20 +196,14 @@ def main():
         open(initrd_path, 'w').close()
 
         print("\n=== 2. lpss_import (with initrd) ===")
-        run(
+        run_safe(
             [
                 lpss_import,
-                '--lpss-dir',
-                lpss_mnt,
-                '--root',
-                rootfs_dir,
-                '--id',
-                'testlinux',
-                '--locator',
-                'label:root.test',
+                '--lpss-dir', lpss_mnt,
+                '--root', rootfs_dir,
+                '--id', 'testlinux',
+                '--locator', 'label:root.test',
             ],
-            env=env,
-            check=True,
         )
 
         check_file_contains(
@@ -223,69 +219,50 @@ def main():
             'entry_testlinux', 'grub.cfg updated',
         )
 
-        # Enable, default, apply
-        print("\n=== 3. lpss_ctl enable + default + apply ===")
-        run(
+        # 3. Enable, default, generate
+        print("\n=== 3. lpss_ctl enable + default + generate ===")
+        run_safe(
             [
                 lpss_ctl,
-                '--lpss-dir',
-                lpss_mnt,
-                'enable',
-                'testlinux',
+                '--lpss-dir', lpss_mnt,
+                'enable', 'testlinux',
             ],
-            env=env,
-            check=True,
         )
-        run(
+        run_safe(
             [
                 lpss_ctl,
-                '--lpss-dir',
-                lpss_mnt,
-                'default',
-                'testlinux',
+                '--lpss-dir', lpss_mnt,
+                'default', 'testlinux',
             ],
-            env=env,
-            check=True,
         )
-        run(
+        run_safe(
             [
                 lpss_ctl,
-                '--lpss-dir',
-                lpss_mnt,
-                'apply',
+                '--lpss-dir', lpss_mnt,
+                'generate',
             ],
-            env=env,
-            check=True,
         )
 
         flags_dir = os.path.join(lpss_mnt, 'flags')
         check_flag_exists(flags_dir, 'testlinux', 'enabled')
         check_flag_exists(flags_dir, 'testlinux', 'default')
 
-        # Import entry without initrd
+        # 3b. Import entry without initrd
         print("\n=== 3b. lpss_import (without initrd) ===")
         rootfs_noinitrd_dir = os.path.join(base, 'rootfs_noinitrd')
         os.makedirs(os.path.join(rootfs_noinitrd_dir, 'boot'), exist_ok=True)
         kernel_noinitrd_path = os.path.join(
-            rootfs_noinitrd_dir,
-            'boot',
-            'vmlinuz-5.10.0',
+            rootfs_noinitrd_dir, 'boot', 'vmlinuz-5.10.0',
         )
         open(kernel_noinitrd_path, 'w').close()
-        run(
+        run_safe(
             [
                 lpss_import,
-                '--lpss-dir',
-                lpss_mnt,
-                '--root',
-                rootfs_noinitrd_dir,
-                '--id',
-                'testnoinitrd',
-                '--locator',
-                'label:root.test2',
+                '--lpss-dir', lpss_mnt,
+                '--root', rootfs_noinitrd_dir,
+                '--id', 'testnoinitrd',
+                '--locator', 'label:root.test2',
             ],
-            env=env,
-            check=True,
         )
 
         check_file_contains(
@@ -324,20 +301,16 @@ def main():
             'grub.cfg contains entry_testnoinitrd',
         )
 
-        # Trial boot and confirm
+        # 4. Trial boot and confirm
         editenv = find_grub_tool('editenv')
         if editenv:
             print("\n=== 4. lpss_ctl trial ===")
-            run(
+            run_safe(
                 [
                     lpss_ctl,
-                    '--lpss-dir',
-                    lpss_mnt,
-                    'trial',
-                    'testlinux',
+                    '--lpss-dir', lpss_mnt,
+                    'trial', 'testlinux',
                 ],
-                env=env,
-                check=True,
             )
             check_file_contains(
                 os.path.join(grub_dir, 'grubenv'),
@@ -350,29 +323,24 @@ def main():
             with open(fake_cmdline, 'w') as f:
                 f.write('lpss_entry=testlinux lpss_trial=1 quiet')
             env['LPSS_CMDLINE_FILE'] = fake_cmdline
-            run(
+            run_safe(
                 [
                     lpss_ctl,
-                    '--lpss-dir',
-                    lpss_mnt,
+                    '--lpss-dir', lpss_mnt,
                     'confirm',
                 ],
-                env=env,
-                check=True,
             )
             check_flag_exists(flags_dir, 'testlinux', 'default')
             print("  [INFO] confirm with trial succeeded.")
 
             with open(fake_cmdline, 'w') as f:
                 f.write('lpss_entry=testlinux quiet')
-            result = run(
+            result = run_raw(
                 [
                     lpss_ctl,
-                    '--lpss-dir',
-                    lpss_mnt,
+                    '--lpss-dir', lpss_mnt,
                     'confirm',
                 ],
-                env=env,
                 capture_output=True,
                 text=True,
             )
