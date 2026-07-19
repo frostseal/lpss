@@ -127,7 +127,7 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    # ---- help--- ---------------------------------------------------------
+    # ---- help ---------------------------------------------------------
     if args.command == 'help':
         parser.print_help()
         sys.exit(0)
@@ -183,7 +183,7 @@ def main():
         current = cmd['lpss_entry'] or 'none'
         print(f"  current: {current}")
 
-        # Find default entry (only for root type, show first found)
+        # Find default entry (first found with 'default' flag)
         default_entry = None
         for eid, f in flags.items():
             if 'default' in f:
@@ -191,12 +191,22 @@ def main():
                 break
         print(f"  default: {default_entry or 'none'}")
 
+        # Trial status: active (booted with lpss_trial) and pending (next_entry in grubenv)
         next_entry = _read_grubenv_next_entry(grubenv_path)
-        trial = None
-        if next_entry and next_entry.startswith('entry_'):
-            trial = next_entry[6:]
-        trial_status = f"{trial} (pending confirmation)" if trial else 'none'
-        print(f"  trial: {trial_status}")
+        if cmd['lpss_trial']:
+            # Currently booted as trial
+            print(f"  trial active: {current} (confirmation required)")
+            # Also show pending if another trial is scheduled (unusual but possible)
+            if next_entry and next_entry.startswith('entry_'):
+                pending = next_entry[6:]
+                print(f"  trial pending: {pending}")
+        else:
+            # Not a trial boot, show pending if any
+            if next_entry and next_entry.startswith('entry_'):
+                pending = next_entry[6:]
+                print(f"  trial pending: {pending}")
+            else:
+                print("  trial pending: none")
 
     # ---- list ------------------------------------------------------------
     elif args.command == 'list':
