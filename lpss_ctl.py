@@ -85,13 +85,13 @@ def main():
     # Trial boot (requires confirm)
     trial_parser = subparsers.add_parser(
         'trial',
-        help='Trial boot – transactional, requires confirmation'
+        help='Set entry for trial on next boot'
     )
     trial_parser.add_argument('entry', help='Entry ID for trial')
 
     subparsers.add_parser(
         'confirm',
-        help='Confirm a trial boot, making it the default'
+        help='Finalize trial and set as default'
     )
 
     enable_parser = subparsers.add_parser(
