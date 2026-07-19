@@ -4,15 +4,13 @@
 LPSS control utility.
 
 Manage boot entries, flags, and trial boots.
-The LPSS partition can be given via --lpss-dir, LPSS_MOUNT env, or
-defaults to /mnt/lpss.
 
 Every modifying operation prints the exact filesystem paths affected.
 """
 import os
 import sys
 
-# Allow running from copied tools directory (e.g., /mnt/lpss/bin)
+# Allow running from copied tools directory (e.g., /boot/lpss/app)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
 
 import argparse
@@ -21,15 +19,10 @@ import subprocess
 from lib.config import load_config
 from lib.flags import (read_flags, create_flag, remove_flag, has_flag)
 from lib.grub import generate_grub_cfg
+from lib.paths import get_lpss_dir
 from lib.utils import (get_grub_subdir, find_grub_tool,
                        parse_cmdline, menu_entry_exists,
                        make_entry_default)
-
-
-def _get_lpss_dir(args_lpss_dir=None):
-    if args_lpss_dir:
-        return args_lpss_dir
-    return os.environ.get('LPSS_MOUNT', '/mnt/lpss')
 
 
 def _check_mount_point(path):
@@ -71,7 +64,8 @@ def main():
     )
     parser.add_argument(
         '--lpss-dir',
-        help='Path to mounted LPSS partition'
+        help='Path to mounted LPSS partition '
+             '(default: /boot/lpss)'
     )
     subparsers = parser.add_subparsers(dest='command')
 
@@ -132,7 +126,7 @@ def main():
         parser.print_help()
         sys.exit(0)
 
-    lpss_dir = _get_lpss_dir(args.lpss_dir)
+    lpss_dir = get_lpss_dir(args.lpss_dir)
 
     # ---- current ---------------------------------------------------------
     if args.command == 'current':
@@ -191,7 +185,7 @@ def main():
                 break
         print(f"  default: {default_entry or 'none'}")
 
-        # Trial status: active (booted with lpss_trial) and pending (next_entry in grubenv)
+        # Trial status
         next_entry = _read_grubenv_next_entry(grubenv_path)
         if cmd['lpss_trial']:
             # Currently booted as trial

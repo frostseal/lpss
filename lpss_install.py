@@ -19,6 +19,7 @@ import sys
 
 from lib.config import load_config
 from lib.grub import generate_grub_cfg
+from lib.paths import get_lpss_dir
 from lib.utils import (
     find_grub_tool,
     get_grub_subdir,
@@ -131,7 +132,7 @@ def setup_runtime(args, lpss_dir):
     print(f"Main grub.cfg path: {grub_cfg_path}")
 
     config = load_config(config_path)
-    generate_grub_cfg(config, grub_cfg_path)
+    generate_grub_cfg(config, grub_cfg_path, lpss_dir=lpss_dir)
     print(f"LPSS grub.cfg written to {grub_cfg_path}")
 
 
@@ -140,8 +141,9 @@ def main():
         description=__doc__,
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
-    parser.add_argument('--lpss-dir', required=True,
-                        help='Mount point of the LPSS partition')
+    parser.add_argument('--lpss-dir',
+                        help='Mount point of the LPSS partition '
+                             '(default: /boot/lpss)')
     parser.add_argument('--esp-dir',
                         help='Mount point of the EFI System Partition '
                              '(required for runtime installation)')
@@ -172,7 +174,7 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
-    lpss_dir = os.path.abspath(args.lpss_dir)
+    lpss_dir = get_lpss_dir(args.lpss_dir)
 
     if do_app:
         install_app_bundle(lpss_dir)

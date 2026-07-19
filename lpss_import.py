@@ -7,27 +7,22 @@ Scans a mounted root filesystem, extracts kernel/initrd info,
 and registers a new entry in lpss.conf, or updates an existing one.
 Regenerates grub.cfg.
 
-The LPSS partition can be specified via --lpss-dir, LPSS_MOUNT
-environment variable, or defaults to /mnt/lpss.
+The LPSS partition can be specified via --lpss-dir, LPSS_DIR
+environment variable, or defaults to /boot/lpss.
 """
 import os
 import sys
 
-# Allow running from copied tools directory (e.g., /mnt/lpss/bin)
+# Allow running from copied tools directory (e.g., /boot/lpss/app)
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'lib'))
 
 import argparse
 
 from lib.config import load_config, LPSSConfigError
 from lib.grub import generate_grub_cfg
+from lib.paths import get_lpss_dir
 from lib.utils import (get_grub_subdir, validate_locator,
                        find_kernel_initrd_in_root)
-
-
-def _get_lpss_dir(args_lpss_dir=None):
-    if args_lpss_dir:
-        return args_lpss_dir
-    return os.environ.get('LPSS_MOUNT', '/mnt/lpss')
 
 
 def main():
@@ -36,7 +31,8 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter
     )
     parser.add_argument('--lpss-dir',
-                        help='Path to mounted LPSS partition')
+                        help='Path to mounted LPSS partition '
+                             '(default: /boot/lpss)')
     parser.add_argument('--root', required=True,
                         help='Path to mounted root filesystem of the Linux installation')
     parser.add_argument('--id', required=True,
@@ -56,7 +52,7 @@ def main():
     args = parser.parse_args()
 
     # ---- validate inputs -------------------------------------------------
-    lpss_dir = _get_lpss_dir(args.lpss_dir)
+    lpss_dir = get_lpss_dir(args.lpss_dir)
     config_path = os.path.join(lpss_dir, 'lpss.conf')
     if not os.path.isfile(config_path):
         print(f"Error: LPSS not initialised. {config_path} not found.",
@@ -153,7 +149,7 @@ def main():
               f"{lpss_dir}.", file=sys.stderr)
         sys.exit(1)
     grub_cfg_path = os.path.join(lpss_dir, grub_subdir, 'grub.cfg')
-    generate_grub_cfg(config, grub_cfg_path)
+    generate_grub_cfg(config, grub_cfg_path, lpss_dir=lpss_dir)
     print(f"Regenerated {grub_cfg_path}")
     print("Operation complete.")
 
